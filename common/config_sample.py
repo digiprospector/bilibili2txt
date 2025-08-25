@@ -1,0 +1,1 @@
+config = {"userdata_dir": "userdata", "temp_dir": "temp", "target_group": ["默认分组"], "debug": False}
