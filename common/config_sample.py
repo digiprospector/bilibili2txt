@@ -1,1 +1,10 @@
-config = {"userdata_dir": "userdata", "temp_dir": "temp", "target_group": ["默认分组"], "debug": False}
+config = {
+    "userdata_dir": "userdata",
+    "temp_dir": "temp",
+    "queue_dir": "queue",
+    "new_video_list_dir": "temp/new_video_list",
+    "save_new_video_list_dir": "save/new_video_list",
+    "target_group": ["默认分组"],
+    "request_interval": 3,
+    "debug": False,
+}

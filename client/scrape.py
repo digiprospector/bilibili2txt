@@ -2,18 +2,17 @@
 # -*- coding: utf-8 -*-
 
 from pathlib import Path
+import json
+import shutil
+import time
+import sqlite3
+
 import sys
 SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
-
-import json
-import logging
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
-import shutil
-import time
-import sqlite3
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -50,6 +49,7 @@ if isinstance(TARGET_GROUPS, str):
     TARGET_GROUPS = [TARGET_GROUPS]
 DEBUG = config["debug"]
 TEMP_DIR = get_dir_in_config("temp_dir")
+NEW_VIDEO_LIST_DIR = get_dir_in_config("new_video_list_dir")
 
 def setup_database():
     """初始化数据库和表"""
@@ -143,6 +143,7 @@ def main():
                 c = 0
                 up_count = 1
                 for up_mid in ups:
+                    any_new_video_in_this_up = False
                     up_name = ups[up_mid]['name']
                     logger.info(f"[{up_count}/{follow_group_ups_count}]UP主: {up_name}")
                     videos = dp_blbl.get_videos_in_up(up_mid)
@@ -161,12 +162,17 @@ def main():
                             if save_video_to_database_if_not_exists(conn, video_info):
                                 logger.info(f"      [新视频] {video_info['title']}")
                                 all_new_videos.append(video_info)
-                            time.sleep(1)
+                            any_new_video_in_this_up = True
+                            time.sleep(config['request_interval'])
                     c += 1
                     up_count += 1
                     if DEBUG and c >= 1:
                         logger.debug("DEBUG 模式，跳出 UP 主循环")
                         break
+                    
+                    if not any_new_video_in_this_up:
+                        logger.info(f"分组 {follow_group_name} 中的 UP 主 {up_name} 没有新视频。")
+                        time.sleep(config['request_interval'])
     
     logger.info("-------------------------------------\n")
     if all_new_videos:
@@ -175,7 +181,7 @@ def main():
         
         new_videos_count = len(all_new_videos)
         current_time = time.strftime("%Y%m%d-%H%M%S")
-        output_filename = TEMP_DIR / f"new_videos_{current_time}.txt"
+        output_filename = NEW_VIDEO_LIST_DIR / f"new_videos_{current_time}.txt"
 
         # 写入文件
         with open(output_filename, 'w', encoding='utf-8') as f:
