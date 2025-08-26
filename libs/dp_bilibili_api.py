@@ -441,8 +441,6 @@ class dp_bilibili:
                 if data.get('code') == 0:
                     # 成功获取，返回数据
                     data_json = data.get("data", {})
-                    with open("video_info_full.json", "w") as f:
-                        json.dump(data_json, f, ensure_ascii=False, indent=4)
                     
                     status = 'normal'
                     if data_json.get('is_upower_exclusive') != False:

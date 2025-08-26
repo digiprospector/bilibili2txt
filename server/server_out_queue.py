@@ -80,7 +80,15 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
                         lines = file.readlines()
                     for line_index, line in enumerate(lines):
                         line = line.strip()
-                        bv_info = json.loads(line)
+                        try:
+                            bv_info = json.loads(line)
+                        except json.decoder.JSONDecodeError:
+                            #不是json格式,直接通过
+                            select_line = line
+                            select_line_index = line_index
+                            select_file = input_file
+                            found = True
+                            break
                         if bv_info["duration"] < duration_limit:
                             select_line = line
                             select_line_index = line_index
@@ -102,7 +110,15 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
                         lines = file.readlines()
                     for line_index, line in enumerate(lines):
                         line = line.strip()
-                        bv_info = json.loads(line)
+                        try:
+                            bv_info = json.loads(line)
+                        except json.decoder.JSONDecodeError:
+                            #不是json格式,直接通过
+                            select_line = line
+                            select_line_index = line_index
+                            select_file = input_file
+                            found = True
+                            break
                         if bv_info["duration"] > duration_limit:
                             select_line = line
                             select_line_index = line_index

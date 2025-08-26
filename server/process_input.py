@@ -5,6 +5,8 @@ import json
 import time
 import subprocess
 from datetime import datetime, timezone, timedelta
+import re
+
 import sys
 
 SCRIPT_DIR = Path(__file__).parent
@@ -76,7 +78,7 @@ def process_input():
 
     # 启动时检查文件是否存在。如果不存在，则创建示例文件并退出。
     if not bv_list_file.exists():
-        print(f"错误：未找到输入文件 '{bv_list_file}'。")
+        logger.info(f"错误：未找到输入文件 '{bv_list_file}'。")
         return False
     
     while True:
@@ -93,7 +95,7 @@ def process_input():
 
         # 如果没有找到有效行，说明所有任务都已处理完毕，退出循环
         if line_with_newline is None:
-            print('没有找到有效行，所有任务处理完毕，退出。')
+            logger.info('没有找到有效行，所有任务处理完毕，退出。')
             break
 
         # 删除已处理的这一行，并保存回文件
@@ -103,37 +105,48 @@ def process_input():
     
         line = line_with_newline.strip()
 
-        print("-" * 40)
-        print(f"开始处理: {line}")
+        logger.info("-" * 40)
+        logger.info(f"开始处理: {line}")
         try:
-            print("--- 开始删除音频文件 ---")
+            logger.info("--- 开始删除音频文件 ---")
             try:
                 TEMP_MP3.unlink()
-                print(f"已删除音频文件: {TEMP_MP3}")
+                logger.info(f"已删除音频文件: {TEMP_MP3}")
             except FileNotFoundError:
                 pass  # 文件不存在，是正常情况
             except Exception as e:
-                print(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
+                logger.info(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
             # 步骤 1: 下载音频
-            print(f"开始下载: {line}")
+            logger.info(f"开始下载: {line}")
             try:
                 bv_info = json.loads(line)
-                print(f'该行是有效的 JSON 字符串。{bv_info.get("bvid")}, {bv_info.get("cid")}')
+                logger.info(f'该行是有效的 JSON 字符串。{bv_info.get("bvid")}, {bv_info.get("cid")}')
                 if bv_info['status'] == 'normal':
                     fetch_audio_link_from_json(bv_info)
                 else:
-                    print(f"状态是{bv_info['status']}, 跳过")
+                    logger.info(f"状态是{bv_info['status']}, 跳过")
                     continue
             except json.JSONDecodeError:
-                print("该行不是有效的 JSON 字符串。")
-                continue
+                logger.info("该行不是有效的 JSON 字符串。通过bvid获得信息.")
+                stripped_line = line.strip()
+                match = re.search(r'BV[a-zA-Z0-9]{10}', stripped_line)
+                if match:
+                    bvid = match.group(0)
+                    dp_blbl = dp_bilibili(logger=logger)
+                    bv_info = dp_blbl.get_video_info(bvid)
+                    bv_info['bvid'] = bvid
+                    logger.info(f"获得信息\n{bv_info=}")
+                    fetch_audio_link_from_json(bv_info)
+                else:
+                    logger.info(f"这行没有bvid:{stripped_line}")
+                    continue
             except Exception as e:
-                print(f"处理 {line} 时出错: {e}")
+                logger.info(f"处理 {line} 时出错: {e}")
                 continue
                 
             # 步骤 2: 调用 faster-whisper-xxl 处理音频
             if TEMP_MP3.exists():
-                print("--- 开始删除转换后的文本文件 ---")
+                logger.info("--- 开始删除转换后的文本文件 ---")
                 try:
                     TEMP_SRT.unlink()
                     TEMP_TXT.unlink()
@@ -141,8 +154,8 @@ def process_input():
                 except FileNotFoundError:
                     pass  # 文件不存在，是正常情况
                 except Exception as e:
-                    print(f"删除文本文件时出错: {e}")
-                print(f"--- 开始使用 faster-whisper-xxl 转录音频 ---")
+                    logger.info(f"删除文本文件时出错: {e}")
+                logger.info(f"--- 开始使用 faster-whisper-xxl 转录音频 ---")
                 whisper_command = [
                     FAST_WHISPER,
                     TEMP_MP3,
@@ -156,12 +169,12 @@ def process_input():
                     '-f', 'txt', 'srt', 'text'
                 ]
                 subprocess.run(whisper_command, check=True)
-                print("--- 音频转录完成 ---")
+                logger.info("--- 音频转录完成 ---")
             else:
-                print(f"警告: 未找到音频文件 '{TEMP_MP3}'，跳过转录步骤。")
+                logger.info(f"警告: 未找到音频文件 '{TEMP_MP3}'，跳过转录步骤。")
                 continue
 
-            print(f"--- 开始复制生成的文本文件 ---")
+            logger.info(f"--- 开始复制生成的文本文件 ---")
             title = bv_info['title']
             invalid_chars = '<>:"/\\|?*'
             sanitized_title = title.translate(str.maketrans(invalid_chars, '_' * len(invalid_chars)))[0:50]
@@ -174,10 +187,10 @@ def process_input():
             shutil.copy(TEMP_SRT, output_srt)
             shutil.copy(TEMP_TXT, output_txt)
             shutil.copy(TEMP_TEXT, output_text)            
-            print(f"已复制生成的文本文件到 {OUTPUT_DIR}")
+            logger.info(f"已复制生成的文本文件到 {OUTPUT_DIR}")
             
         except Exception as e:
-            print(f"处理 {line} 时出错: {e}")
+            logger.info(f"处理 {line} 时出错: {e}")
         
         time.sleep(10)
 
