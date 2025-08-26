@@ -10,6 +10,7 @@ from functools import reduce
 import urllib.parse
 import hashlib
 from pathlib import Path
+from tqdm import tqdm
 
 class dp_bilibili:
     def __init__(self, ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3", cookies=None, logger=None, retry_max=10, retry_interval=5):
@@ -34,7 +35,7 @@ class dp_bilibili:
             self.logger = logging.getLogger(__name__)
             self.logger.setLevel(logging.INFO)
             handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
         self.img_key = None
@@ -83,7 +84,7 @@ class dp_bilibili:
             while True:
                 time.sleep(3)  # 等待一段时间后再轮询
                 params = {'qrcode_key': qrcode_key}
-                poll_response = self.session.get(poll_api, params=params) # 此处将自动使用 session 的 headers
+                poll_response = self.session.get(poll_api, params=self.sign_params(params)) # 此处将自动使用 session 的 headers
                 poll_response.raise_for_status()
                 poll_data = poll_response.json()['data']
                 
@@ -287,9 +288,6 @@ class dp_bilibili:
             "web_location": "1550101"
         }
         
-        # 生成签名
-        signed_params = self.sign_params(params)
-        
         # 请求头
         headers = {
             "Referer": f"https://space.bilibili.com/{mid}/"
@@ -300,7 +298,7 @@ class dp_bilibili:
                 # 发送API请求
                 response = self.session.get(
                     "https://api.bilibili.com/x/space/wbi/arc/search",
-                    params=signed_params,
+                    params=self.sign_params(params),
                     headers=headers,
                     timeout=10
                 )
@@ -357,7 +355,7 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # session中已包含User-Agent
-                response = self.session.get(api_url, headers=headers, params=params, timeout=10)
+                response = self.session.get(api_url, headers=headers, params=self.sign_params(params), timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -401,7 +399,7 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # session中已包含User-Agent
-                response = self.session.get(api_url, params=params, headers=headers, timeout=10)
+                response = self.session.get(api_url, params=self.sign_params(params), headers=headers, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -464,7 +462,7 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # session中已包含User-Agent
-                response = self.session.get(api_url, params=params, timeout=10)
+                response = self.session.get(api_url, params=self.sign_params(params), timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -507,7 +505,8 @@ def download_file_with_resume(session, url, file_path:Path):
     Returns:
         bool: 下载成功返回 True，否则返回 False。
     """
-    headers = {}
+    headers = {"referer": 'https://www.bilibili.com'}
+    file_size = 0
     # 检查是否已存在部分下载的文件
     if file_path.exists():
         file_size = file_path.stat().st_size
@@ -525,11 +524,21 @@ def download_file_with_resume(session, url, file_path:Path):
             print(f"服务器返回异常状态码: {response.status_code}")
             return False
         
-        with open(file_path, mode) as file:
+        total_size = int(response.headers.get('content-length', 0))
+        with open(file_path, mode) as file, tqdm(
+                desc="下载音频",
+                total=total_size + file_size,
+                unit='B',
+                unit_scale=True,
+                unit_divisor=1024,
+                initial=file_size,  # 设置初始值
+                position=0,
+                leave=True
+            ) as bar:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     file.write(chunk)
-        
+                    bar.update(len(chunk))
         print("下载完成!")
         return True
         
@@ -563,7 +572,7 @@ if __name__ == "__main__":
     dp_blbl.logger.info(f"视频 {title} 的详细信息: {video_info}")
     with open("video_info.json", "w") as f:
         json.dump(video_info, f, ensure_ascii=False, indent=4)
-    dl_url = dp_blbl.get_audio_download_url(bvid, video_info[bvid]['cid'])
+    dl_url = dp_blbl.get_audio_download_url(bvid, video_info['cid'])
     dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
     with open("download_url.json", "w") as f:
         json.dump(dl_url, f, ensure_ascii=False, indent=4)
