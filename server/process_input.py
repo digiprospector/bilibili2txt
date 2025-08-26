@@ -44,6 +44,15 @@ def get_dir_in_config(key: str) -> Path:
     dir_path.mkdir(parents=True, exist_ok=True)
     return dir_path
 
+def get_path_in_config(key: str) -> Path:
+    path_str = config[key]
+    if path_str.startswith("/"):
+        _path = Path(path_str)
+    else:
+        _path = SCRIPT_DIR.parent / path_str
+    logger.debug(f"config[{key}] 的路径: {_path}")
+    return _path
+
 from config import config
 
 TEMP_DIR = get_dir_in_config("temp_dir")
@@ -51,8 +60,10 @@ TEMP_MP3 = TEMP_DIR / "audio.mp3"
 TEMP_SRT = TEMP_MP3.with_suffix(".srt")
 TEMP_TEXT = TEMP_MP3.with_suffix(".text")
 TEMP_TXT = TEMP_MP3.with_suffix(".txt")
-FAST_WHISPER = config.get("server_faster_whisper_path")
+FAST_WHISPER = get_path_in_config("server_faster_whisper_path")
 OUTPUT_DIR = TEMP_DIR / "server_text"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 def fetch_audio_link_from_json(bv_info):
     dp_blbl = dp_bilibili(logger=logger)
     dl_url = dp_blbl.get_audio_download_url(bv_info['bvid'], bv_info['cid'])
