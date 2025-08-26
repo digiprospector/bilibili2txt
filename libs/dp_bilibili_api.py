@@ -12,6 +12,42 @@ import hashlib
 from pathlib import Path
 from tqdm import tqdm
 
+import sys
+SCRIPT_DIR = Path(__file__).parent
+sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
+sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
+from dp_logging import setup_logger
+
+# 日志
+logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
+
+# 读取配置文件
+CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
+CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
+
+def create_config_file():
+    if not CONFIG_FILE.exists():
+        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
+        try:
+            
+            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
+        except Exception as e:
+            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
+            exit()
+create_config_file()
+
+def get_dir_in_config(key: str) -> Path:
+    dir_path_str = config[key]
+    if dir_path_str.startswith("/"):
+        dir_path = Path(dir_path_str)
+    else:
+        dir_path = SCRIPT_DIR.parent / dir_path_str
+    logger.debug(f"config[{key}] 的路径: {dir_path}")
+    dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
+
+from config import config
+USERDATA_DIR = get_dir_in_config("userdata_dir")
 class dp_bilibili:
     def __init__(self, ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3", cookies=None, logger=None, retry_max=10, retry_interval=5):
         """
@@ -405,10 +441,13 @@ class dp_bilibili:
                 if data.get('code') == 0:
                     # 成功获取，返回数据
                     data_json = data.get("data", {})
+                    with open("video_info_full.json", "w") as f:
+                        json.dump(data_json, f, ensure_ascii=False, indent=4)
+                    
                     status = 'normal'
                     if data_json.get('is_upower_exclusive') != False:
                         status = 'upower'
-                    video_info = {'pubdate':data_json["pubdate"],'duration':data_json['duration'], 'cid':data_json['cid'], "status":status}
+                    video_info = {'title':data_json["title"],'up_name':data_json["owner"]["name"],'pubdate':data_json["pubdate"],'duration':data_json['duration'], 'cid':data_json['cid'], "status":status}
                     return video_info
                 else:
                     # API返回错误码，打印信息并重试
@@ -548,32 +587,30 @@ def download_file_with_resume(session, url, file_path:Path):
 
 if __name__ == "__main__":
     cookies = {}
-    cookies_file = Path("cookies.json")
+    cookies_file = USERDATA_DIR / "bili_cookies.json"
     if cookies_file.exists():
-        with open("cookies.json", "r") as f:
+        with open(cookies_file, "r") as f:
             cookies = json.load(f)
     dp_blbl = dp_bilibili(cookies=cookies)
     if dp_blbl.login():
-        with open("cookies.json", "w") as f:
-            json.dump(dp_blbl.session.cookies.get_dict(), f)
-    gp = dp_blbl.get_following_groups()
-    dp_blbl.logger.debug(f"关注分组: {gp}")
-    group_id, (group_name, ups_count) = next(iter(gp.items()))  # 获取第一个分组名称
-    dp_blbl.logger.info(f"第一个分组: {group_name}, ID: {group_id}, UP主数量: {ups_count}")
-    ups =dp_blbl.get_ups_in_group(group_id)
-    dp_blbl.logger.info(f"分组 {group_name} 中的UP主: {ups}")
-    up_id, up_name = next(iter(ups.items()))  # 获取第一个UP主
-    dp_blbl.logger.info(f"第一个UP主: {up_name}, ID: {up_id}")
-    videos = dp_blbl.get_videos_in_up(up_id)
-    dp_blbl.logger.info(f"UP主 {up_name} 的视频列表: {videos}")
-    bvid, title = next(iter(videos.items()))  # 获取第一个视频
-    dp_blbl.logger.info(f"第一个视频: {title}, BV号: {bvid}")
-    video_info = dp_blbl.get_video_info(bvid)
-    dp_blbl.logger.info(f"视频 {title} 的详细信息: {video_info}")
-    with open("video_info.json", "w") as f:
-        json.dump(video_info, f, ensure_ascii=False, indent=4)
-    dl_url = dp_blbl.get_audio_download_url(bvid, video_info['cid'])
-    dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
-    with open("download_url.json", "w") as f:
-        json.dump(dl_url, f, ensure_ascii=False, indent=4)
-    download_file_with_resume(dp_blbl.session, dl_url, Path(f"audio.m4s"))
+        gp = dp_blbl.get_following_groups()
+        dp_blbl.logger.debug(f"关注分组: {gp}")
+        group_id, (group_name, ups_count) = next(iter(gp.items()))  # 获取第一个分组名称
+        dp_blbl.logger.info(f"第一个分组: {group_name}, ID: {group_id}, UP主数量: {ups_count}")
+        ups =dp_blbl.get_ups_in_group(group_id)
+        dp_blbl.logger.info(f"分组 {group_name} 中的UP主: {ups}")
+        up_id, up_name = next(iter(ups.items()))  # 获取第一个UP主
+        dp_blbl.logger.info(f"第一个UP主: {up_name}, ID: {up_id}")
+        videos = dp_blbl.get_videos_in_up(up_id)
+        dp_blbl.logger.info(f"UP主 {up_name} 的视频列表: {videos}")
+        bvid, title = next(iter(videos.items()))  # 获取第一个视频
+        dp_blbl.logger.info(f"第一个视频: {title}, BV号: {bvid}")
+        video_info = dp_blbl.get_video_info(bvid)
+        dp_blbl.logger.info(f"视频 {title} 的详细信息: {video_info}")
+        with open("video_info.json", "w") as f:
+            json.dump(video_info, f, ensure_ascii=False, indent=4)
+        dl_url = dp_blbl.get_audio_download_url(bvid, video_info['cid'])
+        dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
+        with open("download_url.json", "w") as f:
+            json.dump(dl_url, f, ensure_ascii=False, indent=4)
+        download_file_with_resume(dp_blbl.session, dl_url, Path(f"audio.m4s"))
