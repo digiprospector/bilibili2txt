@@ -39,6 +39,7 @@ def get_dir_in_config(key: str) -> Path:
     else:
         dir_path = SCRIPT_DIR.parent / dir_path_str
     logger.debug(f"config[{key}] 的路径: {dir_path}")
+    dir_path.mkdir(parents=True, exist_ok=True)
     return dir_path
 
 from config import config
