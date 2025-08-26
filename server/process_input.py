@@ -1,64 +1,54 @@
 
-from dp_logging import setup_logger
 from pathlib import Path
 import shutil
 import json
-from dp_bilibili_api import dp_bilibili, download_file_with_resume
 import time
 import subprocess
 from datetime import datetime, timezone, timedelta
+import sys
 
-logger = setup_logger(Path(__file__).stem)
+SCRIPT_DIR = Path(__file__).parent
+sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
+sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
+from dp_logging import setup_logger
+from dp_bilibili_api import dp_bilibili, download_file_with_resume
+
+# 日志
+logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 
 # Get the directory where the script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-def get_config():
-    """Get the queue directory from the config file."""
-    config_file = SCRIPT_DIR / "config.json"
-    if not config_file.exists():
-        logger.error(f"配置文件 {config_file} 不存在。")
-        shutil.copy(SCRIPT_DIR / "config_sample.json", config_file)
-        logger.info(f"已将 config_sample.json 复制到 {config_file}")
+def create_config_file():
+    if not CONFIG_FILE.exists():
+        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
+        try:
+            
+            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
+        except Exception as e:
+            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
+            exit()
+create_config_file()
 
-    import json
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-
-    return config
-config = get_config()
-
-def get_temp_directory(config):
-    temp_path = Path(config.get("temp_directory", "temp"))
-
-    if temp_path.is_absolute():
-        # 如果是绝对路径，直接使用
-        return temp_path
+def get_dir_in_config(key: str) -> Path:
+    dir_path_str = config[key]
+    if dir_path_str.startswith("/"):
+        dir_path = Path(dir_path_str)
     else:
-        # 如果是相对路径，则解析为相对于脚本目录的绝对路径
-        return (SCRIPT_DIR / temp_path).resolve()
+        dir_path = SCRIPT_DIR.parent / dir_path_str
+    logger.debug(f"config[{key}] 的路径: {dir_path}")
+    dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
 
-def get_output_directory(config):
-    output_path = Path(config.get("output_directory", "output"))
+from config import config
 
-    if output_path.is_absolute():
-        # 如果是绝对路径，直接使用
-        return output_path
-    else:
-        # 如果是相对路径，则解析为相对于脚本目录的绝对路径
-        return (SCRIPT_DIR / output_path).resolve()
-
-TEMP_DIR = get_temp_directory(config)
-if not TEMP_DIR.exists():
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_DIR = get_output_directory(config)
-if not OUTPUT_DIR.exists():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR = get_dir_in_config("temp_dir")
 TEMP_MP3 = TEMP_DIR / "audio.mp3"
 TEMP_SRT = TEMP_MP3.with_suffix(".srt")
 TEMP_TEXT = TEMP_MP3.with_suffix(".text")
 TEMP_TXT = TEMP_MP3.with_suffix(".txt")
-
+FAST_WHISPER = config.get("server_faster_whisper_path")
+OUTPUT_DIR = TEMP_DIR / "server_text"
 def fetch_audio_link_from_json(bv_info):
     dp_blbl = dp_bilibili(logger=logger)
     dl_url = dp_blbl.get_audio_download_url(bv_info['bvid'], bv_info['cid'])
@@ -67,17 +57,16 @@ def fetch_audio_link_from_json(bv_info):
     download_file_with_resume(dp_blbl.session, dl_url, TEMP_MP3)
 
 def process_input():
-    src_file = Path(config.get("bv_list_file", "/content/drive/MyDrive/audio2txt/input.txt"))
-    whisper = '/content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl'
+    bv_list_file = TEMP_DIR / "bv_list.txt"
 
     # 启动时检查文件是否存在。如果不存在，则创建示例文件并退出。
-    if not src_file.exists():
-        print(f"错误：未找到输入文件 '{src_file}'。")
+    if not bv_list_file.exists():
+        print(f"错误：未找到输入文件 '{bv_list_file}'。")
         return False
     
     while True:
         # 在每次循环开始时，都重新读取文件以获取最新内容
-        with open(src_file, 'r', encoding='utf-8') as f:
+        with open(bv_list_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
         # 寻找第一个有效行进行处理
@@ -94,7 +83,7 @@ def process_input():
 
         # 删除已处理的这一行，并保存回文件
         lines.remove(line_with_newline)
-        with open(src_file, 'w', encoding='utf-8') as f:
+        with open(bv_list_file, 'w', encoding='utf-8') as f:
             f.writelines(lines)
     
         line = line_with_newline.strip()
@@ -112,8 +101,6 @@ def process_input():
                 print(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
             # 步骤 1: 下载音频
             print(f"开始下载: {line}")
-            max_attempts = 10
-            delay = 5
             try:
                 bv_info = json.loads(line)
                 print(f'该行是有效的 JSON 字符串。{bv_info.get("bvid")}, {bv_info.get("cid")}')
@@ -124,7 +111,10 @@ def process_input():
                     continue
             except json.JSONDecodeError:
                 print("该行不是有效的 JSON 字符串。")
-                status, audio_link, audio_json = fetch_audio_link_from_line(line, max_attempts, delay)
+                continue
+            except Exception as e:
+                print(f"处理 {line} 时出错: {e}")
+                continue
                 
             # 步骤 2: 调用 faster-whisper-xxl 处理音频
             if TEMP_MP3.exists():
@@ -139,7 +129,7 @@ def process_input():
                     print(f"删除文本文件时出错: {e}")
                 print(f"--- 开始使用 faster-whisper-xxl 转录音频 ---")
                 whisper_command = [
-                    whisper,
+                    FAST_WHISPER,
                     TEMP_MP3,
                     '-m', 'large-v2',
                     '-l', 'Chinese',

@@ -17,8 +17,9 @@ from git_utils import reset_repo, push_changes, set_logger as git_utils_set_logg
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 git_utils_set_logger(logger)
 
-# 读取配置文件CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_IR.parent / "common/config_sample.py"
+# 读取配置文件
+CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
+CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
 
 def create_config_file():
     if not CONFIG_FILE.exists():

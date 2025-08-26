@@ -7,4 +7,5 @@ config = {
     "target_group": ["默认分组"],
     "request_interval": 3, #请求间隔,太小了容易出412风控
     "debug": False,
+    "server_faster_whisper_path": '/content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl'
 }
