@@ -18,6 +18,7 @@ server_in_queue_set_logger(logger)
 # 读取配置文件
 CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
 CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
+DEBUG = config["debug"]
 
 def create_config_file():
     if not CONFIG_FILE.exists():
@@ -42,8 +43,8 @@ def main():
         
         process_input()
         count += 1
-        if count >= 3:
-            logger.info("已处理3轮，退出.")
+        if DEBUG and count >= 3:
+            logger.info("DEBUG模式下，已处理3轮，退出.")
             break
     in_queue()
 

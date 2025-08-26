@@ -4,6 +4,7 @@
 import time
 from pathlib import Path
 import shutil
+import sys
 
 SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
