@@ -108,23 +108,22 @@ def check_missing():
                 is_present = any(bv in filename for filename in text_filename_list)
         
                 if not is_present:
-                    # 如果不存在, 看看status是不是normal
-                    try:
-                        bv_info = json.loads(line.strip())
-                        if bv_info["status"] == "normal":
-                            missing_bvs.append((line, bv))
-                            logger.info(f"缺失的BV号: {bv} (对应行: {line})")
-                    except Exception as e:
-                        logger.info(f"无法解析行内容为JSON: {line} {e}")
-                        ignore_this_bv = False
-                        for ignore_line, ignore_bv in ignore_lines_with_bv:
-                            if ignore_bv == bv:
-                                ignore_this_bv = True
-                                break
-                            
-                        if not ignore_this_bv:
-                            missing_bvs.append((line, bv))
-                            logger.info(f"缺失的BV号: {bv} (对应行: {line})")
+                    # 在ignore list里面
+                    ignore_this_bv = False
+                    for ignore_line, ignore_bv in ignore_lines_with_bv:
+                        if ignore_bv == bv:
+                            ignore_this_bv = True
+                            break
+                    
+                    if not ignore_this_bv:
+                        # 如果不存在, 看看status是不是normal
+                        try:
+                            bv_info = json.loads(line.strip())
+                            if bv_info["status"] == "normal":
+                                missing_bvs.append((line, bv))
+                                logger.info(f"缺失的BV号: {bv} (对应行: {line})")
+                        except Exception as e:
+                            logger.debug(f"无法解析行内容为JSON: {line} {e}")
                             
         # 4. 报告最终结果
         if not missing_bvs:
