@@ -50,8 +50,6 @@ def get_dir_in_config(key: str) -> Path:
 from config import config
 QUEUE_DIR = get_dir_in_config("queue_dir")
 TEMP_DIR = get_dir_in_config("temp_dir")
-NEW_VIDEO_LIST_DIR = get_dir_in_config("new_video_list_dir")
-SAVE_NEW_VIDEO_LIST_DIR = get_dir_in_config("save_new_video_list_dir")
 ID_FILE= SCRIPT_DIR / "id"
 
 def out_queue(duration_limit=864000, limit_type="less_than"):

@@ -105,7 +105,7 @@ def save_video_to_database_if_not_exists(conn: sqlite3.Connection, video_info: d
         logger.error(f"保存视频到数据库时发生错误: {e}")
         return False # 保存失败
             
-def main():
+def scrape():
     # 获取目标分组
     logger.debug(f"目标分组: {TARGET_GROUPS}")
     
@@ -197,4 +197,4 @@ def main():
         logger.info("所有指定分组检查完成，没有发现新视频。")
     
 if __name__ == "__main__":
-    main()
+    scrape()

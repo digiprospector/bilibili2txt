@@ -1,19 +1,18 @@
 from pathlib import Path
 import sys
 import shutil
+import time
+
 
 SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_logging import setup_logger
-from server_out_queue import out_queue, set_logger as server_out_queue_set_logger
-from server_in_queue import in_queue, set_logger as server_in_queue_set_logger
-from process_input import process_input
+from git_utils import reset_repo, push_changes, set_logger as git_utils_set_logger
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
-server_out_queue_set_logger(logger)
-server_in_queue_set_logger(logger)
+git_utils_set_logger(logger)
 
 # 读取配置文件
 CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
@@ -29,24 +28,22 @@ def create_config_file():
             logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
             exit()
 create_config_file()
+
+def get_dir_in_config(key: str) -> Path:
+    dir_path_str = config[key]
+    if dir_path_str.startswith("/"):
+        dir_path = Path(dir_path_str)
+    else:
+        dir_path = SCRIPT_DIR.parent / dir_path_str
+    logger.debug(f"config[{key}] 的路径: {dir_path}")
+    dir_path.mkdir(parents=True, exist_ok=True)
+    return dir_path
+
 from config import config
-DEBUG = config["debug"]
+DATA_DIR = get_dir_in_config("data_dir")
 
-def main():
-    count = 0
-    while True:
-        any_input_file = out_queue(duration_limit=config.get("server_out_queue_duration_limit"), 
-                                   limit_type=config.get("server_out_queue_limit_type"))
-        if not any_input_file:
-            logger.info("没有检测到新的要处理的视频，退出.")
-            break
-        
-        process_input()
-        count += 1
-        if DEBUG and count >= 3:
-            logger.info("DEBUG模式下，已处理3轮，退出.")
-            break
-    in_queue()
-
+def push_data_repo():
+    push_changes(DATA_DIR, "update")
+    
 if __name__ == "__main__":
-    main()
+    push_data_repo()
