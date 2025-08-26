@@ -36,12 +36,24 @@ def push_changes(repo_path: Path, commit_message: str):
         repo = git.Repo(repo_path)
         origin = repo.remotes.origin
         logger.info("正在添加、提交和推送更改...")
-        obj_to_add = [item.a_path for item in repo.index.diff(None)] + repo.untracked_files
-        if not obj_to_add:
+        # 处理删除和新增/修改的文件
+        diff_items = repo.index.diff(None)
+        deleted_files = [item.a_path for item in diff_items if item.change_type == 'D']
+        added_or_modified_files = [item.a_path for item in diff_items if item.change_type in ('A', 'M')]
+        untracked_files = repo.untracked_files
+
+        if not (deleted_files or added_or_modified_files or untracked_files):
             logger.info("没有文件需要添加，跳过提交步骤。")
             return False
 
-        repo.index.add(obj_to_add)
+        # 先处理删除
+        if deleted_files:
+            repo.index.remove(deleted_files, working_tree=True)
+        # 再处理新增/修改和未跟踪文件
+        files_to_add = added_or_modified_files + untracked_files
+        if files_to_add:
+            repo.index.add(files_to_add)
+
         repo.index.commit(commit_message)
         logger.info("正在推送更改...")
         push_infos = origin.push()
