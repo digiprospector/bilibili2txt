@@ -10,5 +10,6 @@ config = {
     "server_faster_whisper_path": '/content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl',
     "server_out_queue_duration_limit": 864000, #服务器端处理视频时长限制，单位秒，默认10天
     "server_out_queue_limit_type": "less_than", #服务器端处理视频时长
-    "save_text_dir": "data/save"
+    "save_text_dir": "data/save",
+    "netdisk_dir": "/directory/netdisk/sync"
 }

@@ -110,12 +110,12 @@ def check_missing():
                 if not is_present:
                     # 如果不存在, 看看status是不是normal
                     try:
-                        bv_info = json.loads(line)
-                        if bv_info.get["status"] == "normal":
+                        bv_info = json.loads(line.strip())
+                        if bv_info["status"] == "normal":
                             missing_bvs.append((line, bv))
                             logger.info(f"缺失的BV号: {bv} (对应行: {line})")
                     except Exception as e:
-                        logger.info(f"无法解析行内容为JSON: {line}")
+                        logger.info(f"无法解析行内容为JSON: {line} {e}")
                         ignore_this_bv = False
                         for ignore_line, ignore_bv in ignore_lines_with_bv:
                             if ignore_bv == bv:
