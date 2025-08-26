@@ -59,7 +59,7 @@ def sync_to_netdisk():
         # 源目录为当前脚本所在位置的 'markdown' 子目录
         source_dir = get_dir_in_config("save_text_dir").parent / "markdown"
         # 目标目录会自动定位到当前用户的“文档”文件夹
-        dest_root_dir = config["netdisk_dir"]
+        dest_root_dir = config["netdisk_dir"] / "markdown"
 
         if not source_dir.is_dir():
             logger.info(f"错误：源目录 '{source_dir.resolve()}' 不存在或不是一个文件夹。")
