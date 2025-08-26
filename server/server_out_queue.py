@@ -17,6 +17,11 @@ from git_utils import reset_repo, push_changes, set_logger as git_utils_set_logg
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 git_utils_set_logger(logger)
 
+def set_logger(logger_instance):
+    global logger
+    logger = logger_instance
+    git_utils_set_logger(logger_instance)
+
 # 读取配置文件
 CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
 CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
