@@ -18,7 +18,6 @@ server_in_queue_set_logger(logger)
 # 读取配置文件
 CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
 CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-DEBUG = config["debug"]
 
 def create_config_file():
     if not CONFIG_FILE.exists():
@@ -31,6 +30,7 @@ def create_config_file():
             exit()
 create_config_file()
 from config import config
+DEBUG = config["debug"]
 
 def main():
     count = 0
