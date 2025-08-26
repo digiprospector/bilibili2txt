@@ -19,6 +19,10 @@ logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 # Get the directory where the script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
+# 读取配置文件
+CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
+CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
+
 def create_config_file():
     if not CONFIG_FILE.exists():
         logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
