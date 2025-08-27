@@ -213,4 +213,5 @@ logs/*
 !logs/.gitkeep
 userdata/*
 !userdata/.gitkeep
-
+data/
+queue/
