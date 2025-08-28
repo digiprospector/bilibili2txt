@@ -77,7 +77,10 @@ def in_queue():
             logger.info(f"已将文件 {input_path} 复制到 {target_dir}")
             logger.info(f"提交信息: {commit_msg}")
             
-            push_changes(QUEUE_DIR, commit_msg)
+            if not push_changes(QUEUE_DIR, commit_msg):
+                logger.error("提交失败, 等待10秒重试")
+                time.sleep(10)
+                continue
             shutil.move(input_path, SAVE_NEW_VIDEO_LIST_DIR / input_path.name)
             logger.info(f"已将文件移动到 {SAVE_NEW_VIDEO_LIST_DIR / input_path.name}")
             break

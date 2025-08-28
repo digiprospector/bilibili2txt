@@ -58,7 +58,10 @@ def copy_mssing_to_queue():
             logger.info(f"已将文件 {src_filename} 复制到 {dst_filename}")
             logger.info(f"提交信息: {commit_msg}")
             
-            push_changes(QUEUE_DIR, commit_msg)
+            if not push_changes(QUEUE_DIR, commit_msg):
+                logger.error("提交失败, 等待10秒重试")
+                time.sleep(10)            
+                continue
             break
         except Exception as e:
             logger.error(f"发生错误: {e}")

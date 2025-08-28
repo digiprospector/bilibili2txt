@@ -65,7 +65,10 @@ def in_queue():
                 if ID_FILE.exists():
                     with ID_FILE.open('r', encoding='utf-8') as f_id:
                         id = f"{f_id.read().strip()}, "
-                push_changes(QUEUE_DIR, f"{id}上传 {len(input_files)} 个已处理的文件")
+                if not push_changes(QUEUE_DIR, f"{id}上传 {len(input_files)} 个已处理的文件"):
+                    logger.error("提交失败, 等待10秒重试")
+                    time.sleep(10) 
+                    continue
                 for input_file in input_files:
                     input_file.unlink()
             else:

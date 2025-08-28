@@ -66,7 +66,10 @@ def out_queue():
             commit_msg = f"已将{count}个文件复制到 {DST_DIR}"
             logger.info(f"提交信息: {commit_msg}")
             
-            push_changes(QUEUE_DIR, commit_msg)
+            if not push_changes(QUEUE_DIR, commit_msg):
+                logger.error("提交失败, 等待10秒重试")
+                time.sleep(10)
+                continue
             break
         except Exception as e:
             logger.error(f"发生错误: {e}")

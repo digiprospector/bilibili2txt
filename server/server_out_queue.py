@@ -175,7 +175,10 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
                     id = f"{f_id.read().strip()}, "
             commit_msg = f"{id}处理 {select_file.name} 里的 {select_line}"
             
-            push_changes(QUEUE_DIR, commit_msg)
+            if not push_changes(QUEUE_DIR, commit_msg):
+                logger.error("提交失败, 等待10秒重试")
+                time.sleep(10)
+                continue
             return found
         except Exception as e:
             logger.error(f"发生错误: {e}")
