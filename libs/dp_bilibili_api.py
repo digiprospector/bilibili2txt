@@ -544,44 +544,60 @@ def download_file_with_resume(session, url, file_path:Path):
     """
     headers = {"referer": 'https://www.bilibili.com'}
     file_size = 0
-    # 检查是否已存在部分下载的文件
-    if file_path.exists():
-        file_size = file_path.stat().st_size
-        headers['Range'] = f'bytes={file_size}-'
-    
-    try:
-        response = session.get(url, headers=headers, stream=True, timeout=30)
-        
-        # 检查服务器是否支持断点续传
-        if response.status_code == 206:  # 部分内容
-            mode = 'ab'  # 追加模式
-        elif response.status_code == 200:  # 全部内容
-            mode = 'wb'  # 写入模式
-        else:
-            print(f"服务器返回异常状态码: {response.status_code}")
-            return False
-        
-        total_size = int(response.headers.get('content-length', 0))
-        with open(file_path, mode) as file, tqdm(
-                desc="下载音频",
-                total=total_size + file_size,
-                unit='B',
-                unit_scale=True,
-                unit_divisor=1024,
-                initial=file_size,  # 设置初始值
-                position=0,
-                leave=True
-            ) as bar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file.write(chunk)
-                    bar.update(len(chunk))
-        print("下载完成!")
-        return True
-        
-    except Exception as e:
-        print(f"下载过程中出现错误: {e}")
-        return False
+    max_attempts = 10
+    retry_interval = 5
+    for attempt in range(max_attempts):
+        try:
+            # 检查是否已存在部分下载的文件
+            if file_path.exists():
+                file_size = file_path.stat().st_size
+                headers['Range'] = f'bytes={file_size}-'
+            
+                response = session.get(url, headers=headers, stream=True, timeout=30)
+                
+                # 检查服务器是否支持断点续传
+                if response.status_code == 206:  # 部分内容
+                    mode = 'ab'  # 追加模式
+                elif response.status_code == 200:  # 全部内容
+                    mode = 'wb'  # 写入模式
+                else:
+                    logger.warning(f"服务器返回异常状态码: {response.status_code}")
+                    if attempt < max_attempts - 1:
+                        logger.info(f"{retry_interval}秒后重试...")
+                        time.sleep(retry_interval)
+                        continue
+                    else:
+                        logger.error("已达到最大重试次数，下载失败。")
+                
+                total_size = int(response.headers.get('content-length', 0))
+                with open(file_path, mode) as file, tqdm(
+                        desc="下载音频",
+                        total=total_size + file_size,
+                        unit='B',
+                        unit_scale=True,
+                        unit_divisor=1024,
+                        initial=file_size,  # 设置初始值
+                        position=0,
+                        leave=True
+                    ) as bar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            file.write(chunk)
+                            bar.update(len(chunk))
+                logger.info("下载完成!")
+                return True
+            
+        except Exception as e:
+            logger.warning(f"下载过程中出现错误: {e}")
+            time.sleep(retry_interval)
+            if attempt < max_attempts - 1:
+                logger.info(f"{retry_interval}秒后重试...")
+                time.sleep(retry_interval)
+                continue
+            else:
+                logger.error("已达到最大重试次数，下载失败。")
+    return False
+
 
 if __name__ == "__main__":
     cookies = {}
