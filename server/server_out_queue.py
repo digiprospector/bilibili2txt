@@ -170,9 +170,13 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
                 break
             
             id = ""
+            logger.debug(f"ID_FILE: {ID_FILE}")
             if ID_FILE.exists():
+                logger.debug(f"ID_FILE.exists(): {ID_FILE.exists()}")
                 with ID_FILE.open('r', encoding='utf-8') as f_id:
                     id = f"{f_id.read().strip()}, "
+                    logger.debug(f"id: {id}")
+            
             commit_msg = f"{id}处理 {select_file.name} 里的 {select_line}"
             
             if not push_changes(QUEUE_DIR, commit_msg):
