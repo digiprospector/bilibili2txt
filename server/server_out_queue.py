@@ -50,7 +50,7 @@ def get_dir_in_config(key: str) -> Path:
 from config import config
 QUEUE_DIR = get_dir_in_config("queue_dir")
 TEMP_DIR = get_dir_in_config("temp_dir")
-ID_FILE= SCRIPT_DIR / "id"
+ID_FILE= SCRIPT_DIR.parent / "id"
 
 def out_queue(duration_limit=864000, limit_type="less_than"):
     if limit_type not in ["less_than", "better_greater_than"]:
@@ -170,12 +170,9 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
                 break
             
             id = ""
-            logger.info(f"ID_FILE: {ID_FILE}")
             if ID_FILE.exists():
-                logger.info(f"ID_FILE.exists(): {ID_FILE.exists()}")
                 with ID_FILE.open('r', encoding='utf-8') as f_id:
                     id = f"{f_id.read().strip()}, "
-                    logger.info(f"id: {id}")
             
             commit_msg = f"{id}处理 {select_file.name} 里的 {select_line}"
             
