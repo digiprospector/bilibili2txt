@@ -44,7 +44,7 @@ def push_changes(repo_path: Path, commit_message: str):
 
         if not (deleted_files or added_or_modified_files or untracked_files):
             logger.info("没有文件需要添加，跳过提交步骤。")
-            return False
+            return True
 
         # 先处理删除
         if deleted_files:
