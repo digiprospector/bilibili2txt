@@ -13,7 +13,7 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_logging import setup_logger
-from dp_bilibili_api import dp_bilibili, download_file_with_resume
+from dp_bilibili_api import dp_bilibili
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -66,12 +66,25 @@ FAST_WHISPER = get_path_in_config("server_faster_whisper_path")
 OUTPUT_DIR = TEMP_DIR / "server_text"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+try:
+    import yt_dlp
+except ImportError:
+    logger.error("yt-dlp 库未安装，请运行 'pip install yt-dlp'。")
+    sys.exit(1)
+
 def fetch_audio_link_from_json(bv_info):
-    dp_blbl = dp_bilibili(logger=logger)
-    dl_url = dp_blbl.get_audio_download_url(bv_info['bvid'], bv_info['cid'])
-    logger.info(f"视频 {bv_info['title']} 的下载链接: {dl_url}")
-    logger.info(f"正在下载 {dl_url} 到 {TEMP_MP3}")
-    download_file_with_resume(dp_blbl.session, dl_url, TEMP_MP3)
+    bvid = bv_info['bvid']
+    video_url = f"https://www.bilibili.com/video/{bvid}"
+    logger.info(f"开始使用 yt-dlp 下载视频 {bv_info['title']} ({bvid}) 的音频")
+
+    ydl_opts = {
+        'format': 'ba/bestaudio',  # 'ba' 代表 bestaudio
+        'outtmpl': str(TEMP_MP3),
+        'quiet': False,
+        'logger': logger,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([video_url])
 
 def process_input():
     bv_list_file = TEMP_DIR / "bv_list.txt"
