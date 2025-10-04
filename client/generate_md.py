@@ -42,7 +42,7 @@ def get_dir_in_config(key: str) -> Path:
 
 from config import config
 
-def create_markdown_files_from_text():
+def create_markdown_files_from_text(force: bool = False):
     """
     遍历指定目录，为每个 .text 文件创建一个对应的 .md 文件。
     如果 .md 文件已存在，则跳过。
@@ -59,7 +59,7 @@ def create_markdown_files_from_text():
     logger.info(f"\n--- 开始处理 '{source_path}' 目录下的文稿文件 ---")
 
     if not source_path.is_dir():
-        logger.info(f"错误: 目录 '{source_path}' 不存在或不是一个有效的目录。")
+        logger.error(f"错误: 目录 '{source_path}' 不存在或不是一个有效的目录。")
         return
 
     # 正则表达式用于匹配 [内容1][内容2][内容3][内容4].text 的格式
@@ -97,7 +97,7 @@ def create_markdown_files_from_text():
             md_filepath = (text_filepath.parent.parent / "markdown" / f"{formatted_time[0:10]}" / text_filepath.name).with_suffix('.md')
 
             # 使用 pathlib.Path.exists() 判断 markdown 文件是否存在，如果存在就跳过
-            if md_filepath.exists():
+            if not force and md_filepath.exists():
                 logger.info(f"  - [跳过] Markdown 文件已存在: '{md_filepath.name}'")
                 skipped_count += 1
                 continue

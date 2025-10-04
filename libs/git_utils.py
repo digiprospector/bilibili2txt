@@ -47,12 +47,19 @@ def push_changes(repo_path: Path, commit_message: str):
             return True
 
         # 先处理删除
+        CHUNK_SIZE = 100  # 定义一个安全的分块大小以避免命令行过长错误
         if deleted_files:
-            repo.index.remove(deleted_files, working_tree=True)
+            logger.info(f"正在从索引中分批移除 {len(deleted_files)} 个已删除文件...")
+            for i in range(0, len(deleted_files), CHUNK_SIZE):
+                chunk = deleted_files[i:i + CHUNK_SIZE]
+                repo.index.remove(chunk, working_tree=True)
         # 再处理新增/修改和未跟踪文件
         files_to_add = added_or_modified_files + untracked_files
         if files_to_add:
-            repo.index.add(files_to_add)
+            logger.info(f"正在分批添加 {len(files_to_add)} 个新增/修改/未跟踪的文件...")
+            for i in range(0, len(files_to_add), CHUNK_SIZE):
+                chunk = files_to_add[i:i + CHUNK_SIZE]
+                repo.index.add(chunk)
 
         repo.index.commit(commit_message)
         logger.info("正在推送更改...")

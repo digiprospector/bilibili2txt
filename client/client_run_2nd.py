@@ -1,3 +1,5 @@
+import argparse
+
 from client_out_queue import out_queue
 from push_data_repo import push_data_repo
 from generate_md import create_markdown_files_from_text
@@ -5,9 +7,20 @@ from sync_to_netdisk import sync_to_netdisk
 from push_data_repo import push_data_repo
 
 def main():
-    out_queue()
+    parser = argparse.ArgumentParser(
+        description="运行客户端的第二阶段任务，包括处理队列、生成Markdown和同步到网盘。",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "-f", "--force", action="store_true",
+        help="强制覆盖现有文件，而不是跳过。"
+    )
+    args = parser.parse_args()
+    force = args.force
+
+    out_queue(force)
     push_data_repo()
-    create_markdown_files_from_text()
+    create_markdown_files_from_text(force)
     sync_to_netdisk()
     push_data_repo()
 

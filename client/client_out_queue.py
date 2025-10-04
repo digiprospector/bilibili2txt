@@ -46,7 +46,7 @@ from config import config
 QUEUE_DIR = get_dir_in_config("queue_dir")
 DST_DIR = get_dir_in_config("save_text_dir")
 
-def out_queue():
+def out_queue(force: bool = False):
     while True:
         try:
             reset_repo(QUEUE_DIR)
@@ -57,11 +57,14 @@ def out_queue():
             for file in SRC_DIR.iterdir():
                 if file.is_file() and not file.name.startswith('.'):
                     try:
+                        if force:
+                            (DST_DIR / file.name).unlink()
+
                         shutil.move(file, DST_DIR)
                         count += 1
-                        logger.info(f"已将文件 {file} 复制到 {DST_DIR}")
+                        logger.debug(f"已将文件 {file} 移动到 {DST_DIR}")
                     except Exception as e:
-                        logger.error(f"复制文件 {file} 到 {DST_DIR} 失败: {e}")
+                        logger.error(f"移动文件 {file} 到 {DST_DIR} 失败: {e}")
                         
             commit_msg = f"已将{count}个文件复制到 {DST_DIR}"
             logger.info(f"提交信息: {commit_msg}")
