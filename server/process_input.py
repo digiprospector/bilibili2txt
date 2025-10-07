@@ -81,7 +81,8 @@ def fetch_audio_link_from_json(bv_info):
         'format': 'ba/bestaudio',  # 'ba' 代表 bestaudio
         'outtmpl': str(TEMP_MP3),
         'retries': 99,
-        'continuedl': True
+        'continuedl': True,
+        'retry_sleep': 10
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
