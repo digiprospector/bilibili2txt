@@ -126,13 +126,19 @@ def process_input():
             try:
                 TEMP_MP3.unlink()
                 logger.info(f"已删除音频文件: {TEMP_MP3}")
+                logger.info(f"已删除音频文件: {TEMP_MP3_PART}")
+            except FileNotFoundError:
+                pass  # 文件不存在，是正常情况
+            except Exception as e:
+                logger.info(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
+            try:
                 TEMP_MP3_PART = (TEMP_MP3.parent / f"{TEMP_MP3.name}.part{TEMP_MP3.suffix}")
                 TEMP_MP3_PART.unlink()
                 logger.info(f"已删除音频文件: {TEMP_MP3_PART}")
             except FileNotFoundError:
                 pass  # 文件不存在，是正常情况
             except Exception as e:
-                logger.info(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
+                logger.info(f"删除音频文件 {TEMP_MP3_PART} 时出错: {e}")
             # 步骤 1: 下载音频
             logger.info(f"开始下载: {line}")
             try:
