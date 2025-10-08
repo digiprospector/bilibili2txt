@@ -14,6 +14,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_logging import setup_logger
 from dp_bilibili_api import dp_bilibili
+from webdav import download_from_webdav_requests, delete_from_webdav_requests
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -73,19 +74,112 @@ except ImportError:
     sys.exit(1)
 
 def fetch_audio_link_from_json(bv_info):
+    """
+    获取音频文件。
+    1. 优先尝试从WebDAV下载。
+    2. 如果失败，则使用yt-dlp下载。
+    返回一个包含已下载音频文件路径的列表。
+    """
+    duration = bv_info.get("duration", 0)
     bvid = bv_info['bvid']
+
+    # 如果视频时长大于1800秒，优先尝试从WebDAV下载
+    if duration > 1800 and bvid:
+        logger.info(f"视频时长 {duration}s > 1800s，尝试从 WebDAV 智能查找并下载...")
+
+        # 1. 优先尝试单个文件的命名格式: {bvid}_NA.mp3
+        filename = f"{bvid}_NA.mp3"
+        webdav_url = f"{config['webdav_url']}/{filename}"
+        logger.info(f"尝试下载单个文件: {filename}")
+        download_successful = download_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], local_file_path=TEMP_MP3, logger=logger)
+        if download_successful:
+            logger.info(f"从 WebDAV 成功下载音频: {filename}")
+            logger.info(f"开始从 WebDAV 删除文件: {filename}")
+            delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+            return [TEMP_MP3]
+
+        # 2. 如果单个文件格式失败，则从1开始逐个尝试合集分P的文件
+        logger.info(f"未找到 {filename}，开始尝试带1开始的,编号的合集文件...")
+        downloaded_files_from_webdav = []
+        for i in range(1, 100): # 尝试从 _1 到 _99
+            filename = f"{bvid}_{i}.mp3"
+            webdav_url = f"{config['webdav_url']}/{filename}"
+            local_temp_file = TEMP_DIR / f"audio_{i}.mp3"
+
+            # 在日志中减少冗余，只在第一次循环时提示
+            if i == 1:
+                logger.info(f"尝试下载: {filename} ...")
+            
+            download_successful = download_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], local_file_path=local_temp_file, logger=logger)
+            
+            if download_successful:
+                logger.info(f"从 WebDAV 成功下载音频: {filename}")
+                downloaded_files_from_webdav.append(local_temp_file)
+                logger.info(f"开始从 WebDAV 删除文件: {filename}")
+                delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+            else:
+                # 下载失败，意味着序列结束
+                break
+
+        # 2.1. 如果从1开始逐个尝试合集分P的文件，则从01开始逐个尝试合集分P的文件
+        if not downloaded_files_from_webdav:
+            logger.info(f"未找到 {filename}，开始尝试带01开始的,编号的合集文件...")
+            for i in range(1, 100): # 尝试从 _01 到 _99
+                filename = f"{bvid}_{i:02}.mp3"
+                webdav_url = f"{config['webdav_url']}/{filename}"
+                local_temp_file = TEMP_DIR / f"audio_{i}.mp3"
+
+                # 在日志中减少冗余，只在第一次循环时提示
+                if i == 1:
+                    logger.info(f"尝试下载: {filename} ...")
+                
+                download_successful = download_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], local_file_path=local_temp_file, logger=logger)
+                
+                if download_successful:
+                    logger.info(f"从 WebDAV 成功下载音频: {filename}")
+                    downloaded_files_from_webdav.append(local_temp_file)
+                    logger.info(f"开始从 WebDAV 删除文件: {filename}")
+                    delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+                else:
+                    # 下载失败，意味着序列结束
+                    break
+
+        if downloaded_files_from_webdav:
+            logger.info(f"从 WebDAV 共下载了 {len(downloaded_files_from_webdav)} 个文件。")
+            return downloaded_files_from_webdav
+        logger.info(f"在 WebDAV 上未找到匹配的音频文件，将回退使用 yt-dlp 下载。")
+
+    # 如果WebDAV下载失败或不满足条件，则使用 yt-dlp
     video_url = f"https://www.bilibili.com/video/{bvid}"
     logger.info(f"开始使用 yt-dlp 下载视频 {bv_info['title']} ({bvid}) 的音频")
-
+    
+    # 为多P视频设置动态文件名模板
+    output_template = TEMP_DIR / 'audio_%(playlist_index)s.mp3'
+    
     ydl_opts = {
         'format': 'ba/bestaudio',  # 'ba' 代表 bestaudio
-        'outtmpl': str(TEMP_MP3),
+        'outtmpl': str(output_template),
         'retries': 20,
         'continuedl': True,
-        'retry_sleep': 10
+        'retry_sleep': {'http': 10, 'fragment': 10, 'hls': 10}
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
+    
+    # 如果yt-dlp为单个视频生成了audio_NA.mp3，将其重命名为audio.mp3
+    na_file = TEMP_DIR / 'audio_NA.mp3'
+    if na_file.exists():
+        target_file = TEMP_DIR / 'audio.mp3'
+        na_file.rename(target_file)
+        logger.info(f"已将 {na_file.name} 重命名为 {target_file.name}")
+        logger.info(f"yt-dlp 下载完成，找到 1 个音频文件。")
+        return [target_file]
+
+    # 查找所有下载的音频文件并返回列表
+    downloaded_files = sorted(TEMP_DIR.glob('audio_*.mp3'))
+    # 检查是否存在单个视频文件（已被重命名或原本就是audio.mp3）
+    logger.info(f"yt-dlp 下载完成，找到 {len(downloaded_files)} 个音频文件。")
+    return downloaded_files
 
 def process_input():
     bv_list_file = TEMP_DIR / "bv_list.txt"
@@ -122,33 +216,25 @@ def process_input():
         logger.info("-" * 40)
         logger.info(f"开始处理: {line}")
         try:
-            logger.info("--- 开始删除音频文件 ---")
+            logger.info("--- 开始清理临时音频文件 ---")
             try:
-                TEMP_MP3.unlink()
-                logger.info(f"已删除音频文件: {TEMP_MP3}")
-            except FileNotFoundError:
-                pass  # 文件不存在，是正常情况
+                # 删除所有 audio*.mp3 和 audio*.mp3.part 文件
+                for f in TEMP_DIR.glob('audio*.mp3*'):
+                    f.unlink()
+                    logger.info(f"已删除临时文件: {f.name}")
             except Exception as e:
-                logger.info(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
-            try:
-                TEMP_MP3_PART = (TEMP_MP3.parent / f"{TEMP_MP3.name}.part")
-                logger.info(f"准备删除音频文件: {TEMP_MP3_PART}")
-                TEMP_MP3_PART.unlink()
-                logger.info(f"已删除音频文件: {TEMP_MP3_PART}")
-            except FileNotFoundError:
-                pass  # 文件不存在，是正常情况
-            except Exception as e:
-                logger.info(f"删除音频文件 {TEMP_MP3_PART} 时出错: {e}")
+                logger.error(f"清理临时音频文件时出错: {e}")
+
             # 步骤 1: 下载音频
             logger.info(f"开始下载: {line}")
+            downloaded_audio_files = []
             try:
                 bv_info = json.loads(line)
                 logger.info(f'该行是有效的 JSON 字符串。{bv_info.get("bvid")}, {bv_info.get("cid")}')
-                if bv_info['status'] == 'normal':
-                    fetch_audio_link_from_json(bv_info)
-                else:
+                if bv_info.get('status') != 'normal':
                     logger.info(f"状态是{bv_info['status']}, 跳过")
                     continue
+                downloaded_audio_files = fetch_audio_link_from_json(bv_info)
             except json.JSONDecodeError:
                 logger.info("该行不是有效的 JSON 字符串。通过bvid获得信息.")
                 stripped_line = line.strip()
@@ -159,58 +245,59 @@ def process_input():
                     bv_info = dp_blbl.get_video_info(bvid)
                     bv_info['bvid'] = bvid
                     logger.info(f"获得信息\n{bv_info=}")
-                    fetch_audio_link_from_json(bv_info)
+                    downloaded_audio_files = fetch_audio_link_from_json(bv_info)
                 else:
                     logger.info(f"这行没有bvid:{stripped_line}")
                     continue
             except Exception as e:
                 logger.info(f"处理 {line} 时出错: {e}")
                 continue
-                
-            # 步骤 2: 调用 faster-whisper-xxl 处理音频
-            if TEMP_MP3.exists():
-                logger.info("--- 开始删除转换后的文本文件 ---")
-                try:
-                    TEMP_SRT.unlink()
-                    TEMP_TXT.unlink()
-                    TEMP_TEXT.unlink()
-                except FileNotFoundError:
-                    pass  # 文件不存在，是正常情况
-                except Exception as e:
-                    logger.info(f"删除文本文件时出错: {e}")
-                logger.info(f"--- 开始使用 faster-whisper-xxl 转录音频 ---")
-                whisper_command = [
-                    FAST_WHISPER,
-                    TEMP_MP3,
-                    '-m', 'large-v2',
-                    '-l', 'Chinese',
-                    '--vad_method', 'pyannote_v3',
-                    '--ff_vocal_extract', 'mdx_kim2',
-                    '--sentence',
-                    '-v', 'true',
-                    '-o', 'source',
-                    '-f', 'txt', 'srt', 'text'
-                ]
-                subprocess.run(whisper_command, check=True)
-                logger.info("--- 音频转录完成 ---")
-            else:
-                logger.info(f"警告: 未找到音频文件 '{TEMP_MP3}'，跳过转录步骤。")
+            
+            if not downloaded_audio_files:
+                logger.warning(f"未下载任何音频文件，跳过转录步骤。")
                 continue
 
-            logger.info(f"--- 开始复制生成的文本文件 ---")
-            title = bv_info['title']
-            invalid_chars = '<>:"/\\|?*'
-            sanitized_title = title.translate(str.maketrans(invalid_chars, '_' * len(invalid_chars)))[0:50]
-            # 将B站API返回的UTC时间戳转换为东八区（UTC+8）时间
-            dt_utc8 = datetime.fromtimestamp(bv_info['pubdate'], tz=timezone(timedelta(hours=8)))
-            fn = f"[{dt_utc8.strftime('%Y-%m-%d_%H-%M-%S')}][{bv_info['up_name']}][{sanitized_title}][{bv_info['bvid']}]"
-            output_srt = OUTPUT_DIR / f"{fn}.srt"
-            output_txt = output_srt.with_suffix('.txt')
-            output_text = output_srt.with_suffix('.text')
-            shutil.copy(TEMP_SRT, output_srt)
-            shutil.copy(TEMP_TXT, output_txt)
-            shutil.copy(TEMP_TEXT, output_text)            
-            logger.info(f"已复制生成的文本文件到 {OUTPUT_DIR}")
+            # 步骤 2: 循环处理所有下载的音频文件
+            for i, audio_file in enumerate(downloaded_audio_files):
+                logger.info(f"--- 开始处理第 {i+1}/{len(downloaded_audio_files)} 个音频: {audio_file.name} ---")
+                if audio_file.exists():
+                    # 清理旧的转录结果
+                    for suffix in ['.srt', '.txt', '.text']:
+                        try:
+                            audio_file.with_suffix(suffix).unlink()
+                        except FileNotFoundError:
+                            pass
+
+                    logger.info(f"--- 开始使用 faster-whisper-xxl 转录音频 ---")
+                    whisper_command = [
+                        FAST_WHISPER, str(audio_file),
+                        '-m', 'large-v2', '-l', 'Chinese',
+                        '--vad_method', 'pyannote_v3', '--ff_vocal_extract', 'mdx_kim2',
+                        '--sentence', '-v', 'true', '-o', 'source',
+                        '-f', 'txt', 'srt', 'text'
+                    ]
+                    subprocess.run(whisper_command, check=True)
+                    logger.info("--- 音频转录完成 ---")
+
+                    logger.info(f"--- 开始复制生成的文本文件 ---")
+                    title = bv_info['title']
+                    invalid_chars = '<>:"/\\|?*'
+                    sanitized_title = title.translate(str.maketrans(invalid_chars, '_' * len(invalid_chars)))[0:50]
+                    dt_utc8 = datetime.fromtimestamp(bv_info['pubdate'], tz=timezone(timedelta(hours=8)))
+                    
+                    # 为多P文件添加后缀
+                    p_suffix = f"_{i+1}" if len(downloaded_audio_files) > 1 else ""
+                    fn = f"[{dt_utc8.strftime('%Y-%m-%d_%H-%M-%S')}][{bv_info['up_name']}][{sanitized_title}][{bv_info['bvid']}{p_suffix}]"
+                    
+                    # 从转录结果复制文件
+                    for suffix in ['.srt', '.txt', '.text']:
+                        src_file = audio_file.with_suffix(suffix)
+                        if src_file.exists():
+                            dst_file = OUTPUT_DIR / f"{fn}{suffix}"
+                            shutil.copy(src_file, dst_file)
+                    logger.info(f"已复制生成的文本文件到 {OUTPUT_DIR}")
+                else:
+                    logger.warning(f"未找到音频文件 '{audio_file}'，跳过。")
             
         except Exception as e:
             logger.info(f"处理 {line} 时出错: {e}")
