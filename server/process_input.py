@@ -131,7 +131,7 @@ def process_input():
             except Exception as e:
                 logger.info(f"删除音频文件 {TEMP_MP3} 时出错: {e}")
             try:
-                TEMP_MP3_PART = (TEMP_MP3.parent / f"{TEMP_MP3.name}.part{TEMP_MP3.suffix}")
+                TEMP_MP3_PART = (TEMP_MP3.parent / f"{TEMP_MP3.stem}.part{TEMP_MP3.suffix}")
                 logger.info(f"准备删除音频文件: {TEMP_MP3_PART}")
                 TEMP_MP3_PART.unlink()
                 logger.info(f"已删除音频文件: {TEMP_MP3_PART}")
