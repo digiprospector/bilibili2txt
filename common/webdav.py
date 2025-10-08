@@ -92,4 +92,25 @@ def delete_from_webdav_requests(url: str, username: str, password: str, logger) 
         logger.error(f"从 WebDAV 删除文件时发生网络错误: {e}")
         return False
 
+def check_webdav_file_exists(url: str, username: str, password: str, logger) -> bool:
+    """
+    使用 requests.head() 检查 WebDAV 服务器上是否存在文件。
+
+    Args:
+        url (str): 要检查的文件的完整 URL。
+        username (str): WebDAV 用户名。
+        password (str): WebDAV 密码。
+        logger: 用于记录日志的 logger 对象。
+
+    Returns:
+        bool: 如果文件存在，则返回 True，否则返回 False。
+    """
+    try:
+        response = requests.head(url, auth=(username, password), timeout=10)
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        logger.error(f"检查 WebDAV 文件是否存在时发生网络错误 ({url}): {e}")
+        return False
+
+
     

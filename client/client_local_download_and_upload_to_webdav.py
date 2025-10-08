@@ -14,7 +14,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_logging import setup_logger
 from git_utils import set_logger as git_utils_set_logger
-from webdav import upload_to_webdav_requests
+from webdav import upload_to_webdav_requests, check_webdav_file_exists
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 git_utils_set_logger(logger)
@@ -67,6 +67,9 @@ def local_download_and_upload_to_webdav():
         for i, line in enumerate(lines):
             try:
                 bv_info = json.loads(line)
+                if bv_info.get("status") != "normal":
+                    logger.info(f"状态是{bv_info['status']}, 跳过")
+                    continue
                 duration_limit = config.get("local_download_audio_seconds", 1800)
                 if bv_info.get("duration", 0) > duration_limit:
                     line_to_process = line
@@ -74,6 +77,22 @@ def local_download_and_upload_to_webdav():
                     bvid = bv_info['bvid']
                     title = bv_info['title']
                     logger.info(f"找到时长 > {duration_limit}s 的视频: [{bvid}] {title}，开始处理...")
+                    
+                    # 检查WebDAV上是否已存在该文件，如果存在则跳过
+                    filenames_to_check = [
+                        f"{bvid}_NA.mp3",  # 单个文件
+                        f"{bvid}_1.mp3",   # 合集分P (从1开始)
+                        f"{bvid}_01.mp3"  # 合集分P (从01开始)
+                    ]
+                    file_exists = False
+                    for filename in filenames_to_check:
+                        url = f"{config['webdav_url']}/{filename}"
+                        if check_webdav_file_exists(url, config['webdav_username'], config['webdav_password'], logger):
+                            logger.info(f"WebDAV上已存在文件: {filename}，跳过下载和上传。")
+                            file_exists = True
+                            break
+                    if file_exists:
+                        continue
 
                     # 1. 下载音频
                     video_url = f"https://www.bilibili.com/video/{bvid}"
