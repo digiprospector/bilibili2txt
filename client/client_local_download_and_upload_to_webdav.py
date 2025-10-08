@@ -49,7 +49,7 @@ TEMP_DIR = get_dir_in_config("temp_dir")
 
 def local_download_and_upload_to_webdav():
     """
-    遍历to_stt目录, 寻找时长 > 1800s 的视频, 下载其音频并上传到WebDAV.
+    遍历to_stt目录, 寻找时长 > local_download_audio_seconds 的视频, 下载其音频并上传到WebDAV.
     """
     src_dir = QUEUE_DIR / "to_stt"
     
@@ -67,12 +67,13 @@ def local_download_and_upload_to_webdav():
         for i, line in enumerate(lines):
             try:
                 bv_info = json.loads(line)
-                if bv_info.get("duration", 0) > 1800:
+                duration_limit = config.get("local_download_audio_seconds", 1800)
+                if bv_info.get("duration", 0) > duration_limit:
                     line_to_process = line
                     bv_info = json.loads(line_to_process)
                     bvid = bv_info['bvid']
                     title = bv_info['title']
-                    logger.info(f"找到时长 > 1800s 的视频: [{bvid}] {title}，开始处理...")
+                    logger.info(f"找到时长 > {duration_limit}s 的视频: [{bvid}] {title}，开始处理...")
 
                     # 1. 下载音频
                     video_url = f"https://www.bilibili.com/video/{bvid}"

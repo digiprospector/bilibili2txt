@@ -83,9 +83,11 @@ def fetch_audio_link_from_json(bv_info):
     duration = bv_info.get("duration", 0)
     bvid = bv_info['bvid']
 
-    # 如果视频时长大于1800秒，优先尝试从WebDAV下载
-    if duration > 1800 and bvid:
-        logger.info(f"视频时长 {duration}s > 1800s，尝试从 WebDAV 智能查找并下载...")
+    # 如果视频时长大于local_download_audio_seconds秒，优先尝试从WebDAV下载
+    duration_limit = config.get("local_download_audio_seconds", 1800)
+    
+    if duration > duration_limit) and bvid:
+        logger.info(f"视频时长 {duration}s > {duration_limit}s，尝试从 WebDAV 智能查找并下载...")
 
         # 1. 优先尝试单个文件的命名格式: {bvid}_NA.mp3
         filename = f"{bvid}_NA.mp3"
