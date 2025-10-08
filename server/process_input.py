@@ -126,7 +126,6 @@ def process_input():
             try:
                 TEMP_MP3.unlink()
                 logger.info(f"已删除音频文件: {TEMP_MP3}")
-                logger.info(f"已删除音频文件: {TEMP_MP3_PART}")
             except FileNotFoundError:
                 pass  # 文件不存在，是正常情况
             except Exception as e:
