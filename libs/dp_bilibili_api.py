@@ -413,6 +413,45 @@ class dp_bilibili:
                 
         return {} # 所有重试都失败后
     
+    def get_up_info(self, mid):
+        """
+        获取指定UP主的个人信息。
+
+        Args:
+            mid (int or str): UP主的UID。
+
+        Returns:
+            dict: UP主信息字典，包含 name 等。失败时返回空字典。
+        """
+        api_url = "https://api.bilibili.com/x/space/acc/info"
+        params = {
+            "mid": mid
+        }
+        
+        headers = {
+            "Referer": f"https://space.bilibili.com/{mid}/"
+        }
+
+        for attempt in range(self.retry_max):
+            try:
+                response = self.session.get(api_url, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                if data.get('code') == 0:
+                    # 成功获取，返回数据
+                    return {'name': data.get("data", {}).get("name")}
+                else:
+                    self.logger.warning(f"获取UP主信息失败 (尝试 {attempt + 1}/{self.retry_max}): {data.get('message')}")
+            except Exception as e:
+                self.logger.error(f"请求UP主信息时发生错误 (尝试 {attempt + 1}/{self.retry_max}): {e}")
+                
+            if attempt < self.retry_max - 1:
+                self.logger.info(f"将在 {self.retry_interval} 秒后重试...")
+                time.sleep(self.retry_interval)
+            else:
+                self.logger.error("已达到最大重试次数，获取UP主信息失败。")
+        return {}
+
     def get_video_info(self, bvid):
         """
         获取指定BVID视频的详细信息。

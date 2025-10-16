@@ -6,6 +6,7 @@ import json
 import shutil
 import time
 import sqlite3
+import argparse
 
 import sys
 SCRIPT_DIR = Path(__file__).parent
@@ -105,7 +106,7 @@ def save_video_to_database_if_not_exists(conn: sqlite3.Connection, video_info: d
         logger.error(f"保存视频到数据库时发生错误: {e}")
         return False # 保存失败
             
-def scrape():
+def scrape(target_up_mid=None):
     # 获取目标分组
     logger.debug(f"目标分组: {TARGET_GROUPS}")
     
@@ -131,49 +132,82 @@ def scrape():
     setup_database()
     conn = sqlite3.connect(DB_FILE)
 
-    # 遍历目标分组
     all_new_videos = []
-    for group in TARGET_GROUPS:
-        for follow_group_id in following_groups:
-            follow_group_name = following_groups[follow_group_id]['name']
-            follow_group_ups_count = following_groups[follow_group_id]['count']
-            if group == follow_group_name:
-                logger.info(f"正在处理分组: {follow_group_name} (ID: {follow_group_id}, 个数: {follow_group_ups_count})")
-                ups = dp_blbl.get_ups_in_group(follow_group_id)
-                logger.debug(f"分组 {follow_group_name} 中的UP主: {ups}")
-                c = 0
-                up_count = 1
-                for up_mid in ups:
-                    any_new_video_in_this_up = False
-                    up_name = ups[up_mid]['name']
-                    logger.info(f"[{up_count}/{follow_group_ups_count}]UP主: {up_name}")
-                    videos = dp_blbl.get_videos_in_up(up_mid)
-                    logger.debug(f"UP主 {up_name} 的视频列表: {videos}")
-                    for bvid in videos:
-                        title = videos[bvid]['title']
-                        video_info = {
-                            "up_name": up_name,
-                            "up_mid": up_mid,
-                            "bvid": bvid,
-                            "title": title,
-                            "link": f"https://www.bilibili.com/video/{bvid}"
-                        }
-                        if not video_exist_in_database(conn, bvid):
-                            video_info.update(dp_blbl.get_video_info(bvid))
-                            if save_video_to_database_if_not_exists(conn, video_info):
-                                logger.info(f"      [新视频] {video_info['title']}")
-                                all_new_videos.append(video_info)
-                            any_new_video_in_this_up = True
+
+    if target_up_mid:
+        # 处理单个UP主
+        logger.info(f"开始处理指定UP主: {target_up_mid}")
+        up_info = dp_blbl.get_up_info(target_up_mid)
+        up_name = up_info.get('name', f'mid_{target_up_mid}')
+        logger.info(f"UP主: {up_name}")
+
+        page_num = 1
+        page_size = 30
+        processed_count = 0
+        total_videos = -1
+
+        while True:
+            logger.info(f"正在获取UP主 {up_name} 的视频列表，第 {page_num} 页...")
+            videos = dp_blbl.get_videos_in_up(target_up_mid, ps=page_size, pn=page_num)
+            if total_videos == -1:
+                total_videos = len(videos)
+
+            if not videos:
+                logger.info(f"UP主 {up_name} 的所有视频页面已获取完毕。")
+                break
+
+            for bvid, video_details in videos.items():
+                processed_count += 1
+                title = video_details['title']
+                logger.info(f"  ({processed_count}/{total_videos}) 正在处理: {title}")
+                video_info = {"up_name": up_name, "up_mid": target_up_mid, "bvid": bvid, "title": title, "link": f"https://www.bilibili.com/video/{bvid}"}
+                
+                if not video_exist_in_database(conn, bvid):                
+                    video_info.update(dp_blbl.get_video_info(bvid))
+                    save_video_to_database_if_not_exists(conn, video_info)
+                    all_new_videos.append(video_info)
+                    time.sleep(config['request_interval'])
+            page_num += 1
+    else:
+        # 遍历目标分组 (原有逻辑)
+        for group in TARGET_GROUPS:
+            for follow_group_id in following_groups:
+                follow_group_name = following_groups[follow_group_id]['name']
+                follow_group_ups_count = following_groups[follow_group_id]['count']
+                if group == follow_group_name:
+                    logger.info(f"正在处理分组: {follow_group_name} (ID: {follow_group_id}, 个数: {follow_group_ups_count})")
+                    ups = dp_blbl.get_ups_in_group(follow_group_id)
+                    logger.debug(f"分组 {follow_group_name} 中的UP主: {ups}")
+                    c = 0
+                    up_count = 1
+                    for up_mid in ups:
+                        any_new_video_in_this_up = False
+                        up_name = ups[up_mid]['name']
+                        logger.info(f"[{up_count}/{follow_group_ups_count}] UP主: {up_name}")
+                        videos = dp_blbl.get_videos_in_up(up_mid) # 原有逻辑只取第一页
+                        logger.debug(f"UP主 {up_name} 的视频列表: {videos}")
+                        for bvid in videos:
+                            title = videos[bvid]['title']
+                            video_info = {
+                                "up_name": up_name, "up_mid": up_mid, "bvid": bvid, "title": title,
+                                "link": f"https://www.bilibili.com/video/{bvid}"
+                            }
+                            if not video_exist_in_database(conn, bvid):
+                                video_info.update(dp_blbl.get_video_info(bvid)) # 获取详细信息
+                                if save_video_to_database_if_not_exists(conn, video_info): # 保存到数据库
+                                    logger.info(f"      [新视频] {video_info['title']}")
+                                    all_new_videos.append(video_info)
+                                any_new_video_in_this_up = True
+                                time.sleep(config['request_interval'])
+                        c += 1
+                        up_count += 1
+                        if DEBUG and c >= 1:
+                            logger.debug("DEBUG 模式，跳出 UP 主循环")
+                            break
+                        
+                        if not any_new_video_in_this_up:
+                            logger.info(f"分组 {follow_group_name} 中的 UP 主 {up_name} 没有新视频。")
                             time.sleep(config['request_interval'])
-                    c += 1
-                    up_count += 1
-                    if DEBUG and c >= 1:
-                        logger.debug("DEBUG 模式，跳出 UP 主循环")
-                        break
-                    
-                    if not any_new_video_in_this_up:
-                        logger.info(f"分组 {follow_group_name} 中的 UP 主 {up_name} 没有新视频。")
-                        time.sleep(config['request_interval'])
     
     logger.info("-------------------------------------\n")
     if all_new_videos:
@@ -190,11 +224,19 @@ def scrape():
                 line = json.dumps(video, ensure_ascii=False) + "\n"
                 f.write(line)
         
-        logger.info(f"检查完成，共发现 {new_videos_count} 个新视频。")
+        logger.info(f"检查完成，共发现 {new_videos_count} 个符合条件的视频。")
         logger.info(f"新视频列表已保存到 {output_filename}")
         logger.info(f"所有视频历史记录已更新到 {DB_FILE}")
     else:
-        logger.info("所有指定分组检查完成，没有发现新视频。")
+        logger.info("所有指定分组或UP主检查完成，没有发现符合条件的视频。")
     
 if __name__ == "__main__":
-    scrape()
+    parser = argparse.ArgumentParser(description="从Bilibili关注分组或指定UP主那里抓取视频信息。")
+    parser.add_argument(
+        "--up-mid",
+        type=int,
+        help="指定要抓取的单个UP主的MID。"
+    )
+    args = parser.parse_args()
+
+    scrape(target_up_mid=args.up_mid)
