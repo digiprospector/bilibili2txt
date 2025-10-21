@@ -197,12 +197,6 @@ class MainWindow(QMainWindow):
             if self.windowState() & Qt.WindowMinimized:
                 event.ignore()  # Ignore the default minimize event
                 self.hide()     # Hide the window
-                self.tray_icon.showMessage(
-                    "仍在后台运行",
-                    "程序已最小化到系统托盘。",
-                    QSystemTrayIcon.Information,
-                    2000
-                )
                 return
         super().changeEvent(event)
 
@@ -231,7 +225,7 @@ if __name__ == "__main__":
     app.setQuitOnLastWindowClosed(False) 
     
     main_win = MainWindow()
-    # You can choose to show the window on start or not
-    main_win.show() 
+    # The window is not shown on startup, it's minimized to the tray.
+    # The user can open it from the tray icon menu.
     
     sys.exit(app.exec())
