@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import shutil
 
+import argparse
 SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
@@ -35,8 +36,11 @@ DEBUG = config["debug"]
 def main():
     count = 0
     while True:
-        any_input_file = out_queue(duration_limit=config.get("server_out_queue_duration_limit"), 
-                                   limit_type=config.get("server_out_queue_limit_type"))
+        duration_limit = config.get("server_out_queue_duration_limit")
+        limit_type = config.get("server_out_queue_limit_type")
+        logger.info(f"使用参数: duration_limit={duration_limit}, limit_type='{limit_type}'")
+        any_input_file = out_queue(duration_limit=duration_limit, 
+                                   limit_type=limit_type)
         if any_input_file == "quit":
             logger.info("检测到 quit 文件，退出任务处理循环。")
             break
@@ -52,4 +56,16 @@ def main():
     in_queue()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Bilibili2Txt Server Runner")
+    parser.add_argument('-l', '--limit', type=int, help='覆盖配置中的 server_out_queue_duration_limit')
+    parser.add_argument('-t', '--type', type=str, help='覆盖配置中的 server_out_queue_limit_type')
+    args = parser.parse_args()
+
+    if args.limit is not None:
+        config['server_out_queue_duration_limit'] = args.limit
+        logger.info(f"通过命令行参数 -l 设置 server_out_queue_duration_limit 为: {args.limit}")
+
+    if args.type is not None:
+        config['server_out_queue_limit_type'] = args.type
+        logger.info(f"通过命令行参数 -t 设置 server_out_queue_limit_type 为: '{args.type}'")
     main()

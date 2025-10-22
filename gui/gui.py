@@ -22,6 +22,7 @@ class ScriptRunner(QObject):
     """Handles running the external script."""
     setup_error = Signal(str)
     log_message = Signal(str)
+    finished_message = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +45,7 @@ class ScriptRunner(QObject):
         print(f"Starting script: {PYTHON_EXECUTABLE} {script_path.absolute()}")
         self.log_message.emit(f"--- 开始运行脚本: {script_path.name} ---\n")
         self.process = QProcess()
+        self.script_path_name = script_path.name
 
         # 设置子进程的环境变量，强制其输出为UTF-8，解决中文乱码问题
         env = QProcessEnvironment.systemEnvironment()
@@ -69,6 +71,7 @@ class ScriptRunner(QObject):
     def on_finished(self, exit_code, exit_status):
         status_text = "正常退出" if exit_status == QProcess.NormalExit else "崩溃"
         self.log_message.emit(f"\n--- 脚本运行结束 (退出码: {exit_code}, 状态: {status_text}) ---\n")
+        self.finished_message.emit(f"{self.script_path_name} 脚本运行结束 (退出码: {exit_code}, 状态: {status_text})")
         self.process = None
 
 
@@ -167,6 +170,7 @@ class MainWindow(QMainWindow):
         self.server.trigger_script.connect(self.runner.run_script)
         self.runner.setup_error.connect(self.show_error_message)
         self.runner.log_message.connect(self.append_log_message)
+        self.runner.finished_message.connect(self.show_finished_message)
 
         if not self.server.start():
             QMessageBox.critical(self, "Server Error", f"Could not start server on port {PORT}. The application will now exit.")
@@ -174,7 +178,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.quit_application)
 
     def append_log_message(self, message):
-        print(f"DEBUG: Raw message (binary): {message.encode('utf-8', errors='replace')}")
+        # print(f"DEBUG: Raw message (binary): {message.encode('utf-8', errors='replace')}")
         
         # 获取文本光标并移动到文档末尾
         cursor = self.log_display.textCursor()
@@ -208,6 +212,7 @@ class MainWindow(QMainWindow):
 
     def show_error_message(self, message):
         self.tray_icon.showMessage("Error", message, QSystemTrayIcon.Critical)
+        QApplication.beep()
 
     @Slot(QSystemTrayIcon.ActivationReason)
     def on_tray_icon_activated(self, reason):
@@ -235,6 +240,12 @@ class MainWindow(QMainWindow):
         """When the user closes the window (clicks X), quit the application."""
         self.quit_application()
         event.accept()
+
+    @Slot(str)
+    def show_finished_message(self, message):
+        """在系统托盘中显示一条完成消息。"""
+        self.tray_icon.showMessage("任务完成", message, QSystemTrayIcon.Information, 5000)
+        QApplication.beep()
 
     def quit_application(self):
         """Properly clean up and exit the application."""
