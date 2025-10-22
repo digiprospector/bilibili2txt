@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot, QProcess, QTimer, QProcessEnvironment, QEvent, Qt
 from PySide6.QtNetwork import QTcpServer, QHostAddress
 from PySide6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon, QMenu, QMessageBox, QStyle, QTextEdit, QVBoxLayout, QWidget
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QTextCursor
 
 # --- Configuration ---
 HOST = QHostAddress.LocalHost
@@ -174,15 +174,46 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.quit_application)
 
     def append_log_message(self, message):
-        self.log_display.append(message.strip())
+        print(f"DEBUG: Raw message (binary): {message.encode('utf-8', errors='replace')}")
+        
+        # 获取文本光标并移动到文档末尾
+        cursor = self.log_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+
+        # 检查是否是行内更新（如tqdm进度条）
+        if message.startswith('\r'):
+            # 这是一个行内更新
+            # 移动到当前块（行）的开始
+            cursor.movePosition(QTextCursor.StartOfBlock)
+            # 选中到文档末尾（即选中当前最后一行）
+            cursor.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
+            # 删除选中的文本
+            cursor.removeSelectedText()
+            # 插入新的、清理过的文本
+            if message.endswith('\r\n'):
+                # 如果是纯行内更新，没有换行符，则去掉末尾的\r\n
+                message = message[1:-2]
+            else:
+                message = message[1:]  # 去掉开头的\r
+            cursor.insertText(message)
+        else:
+            # 这是普通日志或进度条的最后一次输出（通常带'\n'）
+            # 直接插入文本，保留其原始格式
+            # strip()可以清理掉\r，同时保留多行输出中的\n
+            cursor.insertText(message)
+
+        # 确保文本框自动滚动到底部
+        self.log_display.ensureCursorVisible()
+
 
     def show_error_message(self, message):
         self.tray_icon.showMessage("Error", message, QSystemTrayIcon.Critical)
 
     @Slot(QSystemTrayIcon.ActivationReason)
     def on_tray_icon_activated(self, reason):
-        """Handle tray icon activation to show window on double-click."""
-        if reason == QSystemTrayIcon.DoubleClick:
+        """Handle tray icon activation to show window on single-click."""
+        # QSystemTrayIcon.Trigger corresponds to a single left-click.
+        if reason == QSystemTrayIcon.Trigger:
             if self.isMinimized():
                 self.setWindowState(self.windowState() & ~Qt.WindowMinimized) # 恢复窗口状态
             elif not self.isVisible():
@@ -225,7 +256,10 @@ if __name__ == "__main__":
     app.setQuitOnLastWindowClosed(False) 
     
     main_win = MainWindow()
-    # The window is not shown on startup, it's minimized to the tray.
-    # The user can open it from the tray icon menu.
+    
+    # Check for the --hide argument. If present, start minimized to tray.
+    # Otherwise, show the window.
+    if "--hide" not in sys.argv:
+        main_win.show()
     
     sys.exit(app.exec())

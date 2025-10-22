@@ -63,6 +63,11 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
     
     while True:
         try:
+            # 检查是否存在 'quit' 文件，如果存在则退出循环
+            quit_file = src_dir / "quit"
+            if quit_file.exists():
+                logger.info(f"检测到 {quit_file} 文件，退出 out_queue 循环。")
+                return "quit"
             reset_repo(QUEUE_DIR)
             input_files = sorted([f for f in src_dir.glob("*") if not f.name.startswith(".") and f.is_file()])
             if not input_files:
@@ -185,6 +190,9 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
             logger.error(f"发生错误: {e}")
             time.sleep(10)
             logger.info("10秒后重试...")
+            
+        return False
+
 
 if __name__ == "__main__":
     if out_queue():

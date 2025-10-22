@@ -37,7 +37,10 @@ def main():
     while True:
         any_input_file = out_queue(duration_limit=config.get("server_out_queue_duration_limit"), 
                                    limit_type=config.get("server_out_queue_limit_type"))
-        if not any_input_file:
+        if any_input_file == "quit":
+            logger.info("检测到 quit 文件，退出任务处理循环。")
+            break
+        elif not any_input_file:
             logger.info("没有检测到新的要处理的视频，退出.")
             break
         
