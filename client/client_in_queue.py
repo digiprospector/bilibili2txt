@@ -67,6 +67,10 @@ def in_queue():
         files = sorted(NEW_VIDEO_LIST_DIR.glob("*"))
         input_path = files[-1] if files else None
     
+    if not input_path:
+        logger.info(f"没有指定输入文件，并且目录 {NEW_VIDEO_LIST_DIR} 中也没有找到可用的文件。")
+        return
+
     while True:
         try:
             reset_repo(QUEUE_DIR)
