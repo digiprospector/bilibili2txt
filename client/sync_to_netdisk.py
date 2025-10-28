@@ -98,7 +98,7 @@ def sync_to_netdisk():
                         shutil.copy2(source_file, dest_file_path)
                         logger.info(f"  -> 至: {dest_file_path}")
                     else:
-                        logger.info(f"跳过 (已存在): {dest_file_path}")
+                        logger.debug(f"跳过 (已存在): {dest_file_path}")
             else:
                 logger.info(f"跳过 (目录格式不符): {date_str}")
 

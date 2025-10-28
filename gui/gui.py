@@ -275,8 +275,8 @@ class MainWindow(QMainWindow):
             self.insert_formatted_text(cursor, message, en_font, zh_font)
 
         # 如果之前就在底部，则新消息到来后继续滚动到底部
-        if is_at_bottom:
-            log_display.ensureCursorVisible()
+        #if is_at_bottom:
+        #    log_display.ensureCursorVisible()
 
     @Slot()
     def select_font(self, lang):
