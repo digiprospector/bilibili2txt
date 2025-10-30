@@ -21,8 +21,8 @@ SCRIPTS_CONFIG = [
     },
     # You can add more scripts here, for example:
     {
-        "name": "Push Data Repo",
-        "script": str(CURRENT_DIR / "../client/push_data_repo.py"),
-        "msg": b"RUN_SCRIPT_PUSH_DATA"
+        "name": "Test",
+        "script": str(CURRENT_DIR / "../client/test_output.py"),
+        "msg": b"RUN_SCRIPT_TEST"
     },
 ]

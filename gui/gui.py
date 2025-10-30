@@ -257,17 +257,14 @@ class MainWindow(QMainWindow):
         if message.startswith('\r'):
             # 这是一个行内更新
             # 移动到当前块（行）的开始
-            cursor.movePosition(QTextCursor.StartOfBlock)
+            cursor.movePosition(QTextCursor.StartOfLine)
             # 选中到文档末尾（即选中当前最后一行）
             cursor.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
             # 删除选中的文本
             cursor.removeSelectedText()
-            # 插入新的、清理过的文本
-            if message.endswith('\r\n'):
-                # 如果是纯行内更新，没有换行符，则去掉末尾的\r\n
-                message = message[1:-2]
-            else:
-                message = message[1:]  # 去掉开头的\r
+            # 加一个回车
+            if message.endswith('\n'):
+                message = message + '\n'
             self.insert_formatted_text(cursor, message, en_font, zh_font)
         else:
             # 这是普通日志或进度条的最后一次输出（通常带'\n'）

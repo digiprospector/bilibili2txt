@@ -98,7 +98,7 @@ def create_markdown_files_from_text(force: bool = False):
 
             # 使用 pathlib.Path.exists() 判断 markdown 文件是否存在，如果存在就跳过
             if not force and md_filepath.exists():
-                logger.info(f"  - [跳过] Markdown 文件已存在: '{md_filepath.name}'")
+                logger.debug(f"  - [跳过] Markdown 文件已存在: '{md_filepath.name}'")
                 skipped_count += 1
                 continue
 
