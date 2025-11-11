@@ -1,2 +1,4 @@
 qrcode
 yt-dlp
+GitPython
+tqdm
