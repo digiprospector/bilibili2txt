@@ -3,11 +3,19 @@ from tqdm import tqdm
 import requests
 from requests.auth import HTTPBasicAuth
 
-def upload_to_webdav_requests(url, username, password, file_path: Path, logger):
+def upload_to_webdav_requests(url, username, password, file_path: Path, logger, webdav_proxy: str = None):
     """
     使用requests库上传文件到WebDAV，并显示进度条。
     """
     try:
+        proxies = None
+        if webdav_proxy:
+            proxies = {
+                "http": webdav_proxy,
+                "https": webdav_proxy,
+            }
+            logger.info(f"使用 WebDAV 代理: {webdav_proxy}")
+
         # 使用 pathlib 获取文件大小和文件名
         file_size = file_path.stat().st_size
         file_name = file_path.name
@@ -19,7 +27,8 @@ def upload_to_webdav_requests(url, username, password, file_path: Path, logger):
                     url,
                     data=file_with_progress,
                     auth=HTTPBasicAuth(username, password),
-                    headers={'Content-Type': 'application/octet-stream'}
+                    headers={'Content-Type': 'application/octet-stream'},
+                    proxies=proxies
                 )
         
         if response.status_code in [200, 201, 204]:
@@ -92,7 +101,7 @@ def delete_from_webdav_requests(url: str, username: str, password: str, logger) 
         logger.error(f"从 WebDAV 删除文件时发生网络错误: {e}")
         return False
 
-def check_webdav_file_exists(url: str, username: str, password: str, logger) -> bool:
+def check_webdav_file_exists(url: str, username: str, password: str, logger, webdav_proxy: str = None) -> bool:
     """
     使用 requests.head() 检查 WebDAV 服务器上是否存在文件。
 
@@ -106,7 +115,15 @@ def check_webdav_file_exists(url: str, username: str, password: str, logger) -> 
         bool: 如果文件存在，则返回 True，否则返回 False。
     """
     try:
-        response = requests.head(url, auth=(username, password), timeout=10)
+        proxies = None
+        if webdav_proxy:
+            proxies = {
+                "http": webdav_proxy,
+                "https": webdav_proxy,
+            }
+            # 检查文件时，代理信息可能比较敏感或冗余，可以选择不打印日志
+
+        response = requests.head(url, auth=(username, password), timeout=10, proxies=proxies)
         return response.status_code == 200
     except requests.exceptions.RequestException as e:
         logger.error(f"检查 WebDAV 文件是否存在时发生网络错误 ({url}): {e}")

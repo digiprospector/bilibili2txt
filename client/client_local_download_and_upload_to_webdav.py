@@ -87,7 +87,13 @@ def local_download_and_upload_to_webdav():
                     file_exists = False
                     for filename in filenames_to_check:
                         url = f"{config['webdav_url']}/{filename}"
-                        if check_webdav_file_exists(url, config['webdav_username'], config['webdav_password'], logger):
+                        if check_webdav_file_exists(
+                            url, 
+                            config['webdav_username'], 
+                            config['webdav_password'], 
+                            logger, 
+                            webdav_proxy=config.get('webdav_proxy')
+                        ):
                             logger.info(f"WebDAV上已存在文件: {filename}，跳过下载和上传。")
                             file_exists = True
                             break
@@ -117,7 +123,8 @@ def local_download_and_upload_to_webdav():
                                 username=config['webdav_username'],
                                 password=config['webdav_password'],
                                 file_path=output_audio_path,
-                                logger=logger
+                                logger=logger,
+                                webdav_proxy=config.get('webdav_proxy')
                             )
                             if upload_successful:
                                 # 上传后删除本地临时文件
