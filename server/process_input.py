@@ -14,7 +14,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_logging import setup_logger
 from dp_bilibili_api import dp_bilibili
-from webdav import download_from_webdav_requests, delete_from_webdav_requests
+from webdav import download_from_webdav_requests
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
