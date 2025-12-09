@@ -95,9 +95,9 @@ def fetch_audio_link_from_json(bv_info):
         logger.info(f"尝试下载单个文件: {filename}")
         download_successful = download_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], local_file_path=TEMP_MP3, logger=logger)
         if download_successful:
-            logger.info(f"从 WebDAV 成功下载音频: {filename}")
-            logger.info(f"开始从 WebDAV 删除文件: {filename}")
-            delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+            #logger.info(f"从 WebDAV 成功下载音频: {filename}")
+            #logger.info(f"开始从 WebDAV 删除文件: {filename}")
+            #delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
             return [TEMP_MP3]
 
         # 2. 如果单个文件格式失败，则从1开始逐个尝试合集分P的文件
@@ -117,8 +117,8 @@ def fetch_audio_link_from_json(bv_info):
             if download_successful:
                 logger.info(f"从 WebDAV 成功下载音频: {filename}")
                 downloaded_files_from_webdav.append(local_temp_file)
-                logger.info(f"开始从 WebDAV 删除文件: {filename}")
-                delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+                #logger.info(f"开始从 WebDAV 删除文件: {filename}")
+                #delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
             else:
                 # 下载失败，意味着序列结束
                 break
@@ -140,8 +140,8 @@ def fetch_audio_link_from_json(bv_info):
                 if download_successful:
                     logger.info(f"从 WebDAV 成功下载音频: {filename}")
                     downloaded_files_from_webdav.append(local_temp_file)
-                    logger.info(f"开始从 WebDAV 删除文件: {filename}")
-                    delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
+                    #logger.info(f"开始从 WebDAV 删除文件: {filename}")
+                    #delete_from_webdav_requests(url=webdav_url, username=config['webdav_username'], password=config['webdav_password'], logger=logger)
                 else:
                     # 下载失败，意味着序列结束
                     break

@@ -61,6 +61,38 @@ def local_download_and_upload_to_webdav():
     found_and_processed = False
     for file_path in input_files:
         lines = file_path.read_text(encoding='utf-8').splitlines()
+        if not lines:
+            logger.info(f"文件 {file_path.name} 为空，跳过。")
+            continue
+
+        # 检查最后一行的视频是否已在WebDAV上，如果是，则跳过整个文件
+        try:
+            last_line_info = json.loads(lines[-1])
+            last_bvid = last_line_info.get('bvid')
+            if last_bvid:
+                filenames_to_check = [
+                    f"{last_bvid}_NA.mp3",
+                    f"{last_bvid}_1.mp3",
+                    f"{last_bvid}_01.mp3"
+                ]
+                file_exists_on_webdav = False
+                for filename in filenames_to_check:
+                    url = f"{config['webdav_url']}/{filename}"
+                    if check_webdav_file_exists(
+                        url,
+                        config['webdav_username'],
+                        config['webdav_password'],
+                        logger,
+                        webdav_proxy=config.get('webdav_proxy')
+                    ):
+                        logger.info(f"文件 {file_path.name} 的最后一个视频 {last_bvid} 已存在于WebDAV ({filename})，跳过整个文件。")
+                        file_exists_on_webdav = True
+                        break
+                if file_exists_on_webdav:
+                    continue
+        except json.JSONDecodeError:
+            logger.warning(f"无法解析文件 {file_path.name} 的最后一行，将继续处理文件内容。")
+
         line_to_process = None
 
         # 查找符合条件的行
