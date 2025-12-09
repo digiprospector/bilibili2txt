@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import shutil
 import json
+import requests
+from xml.etree import ElementTree
 import yt_dlp
 
 SCRIPT_DIR = Path(__file__).parent
@@ -47,11 +49,38 @@ from config import config
 QUEUE_DIR = get_dir_in_config("queue_dir")
 TEMP_DIR = get_dir_in_config("temp_dir")
 
+def list_webdav_files(url, username, password, logger, webdav_proxy=None):
+    """获取WebDAV服务器上指定路径下的文件列表"""
+    logger.info(f"正在从 WebDAV 获取文件列表: {url}")
+    proxies = {'http': webdav_proxy, 'https': webdav_proxy} if webdav_proxy else None
+    try:
+        response = requests.request(
+            "PROPFIND",
+            url,
+            auth=(username, password),
+            headers={"Depth": "1"},
+            proxies=proxies,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        # 解析XML响应
+        root = ElementTree.fromstring(response.content)
+        # 命名空间通常是 {DAV:}
+        ns = {'d': 'DAV:'}
+        filenames = [Path(href.text).name for href in root.findall('.//d:href', ns)]
+        logger.info(f"从 WebDAV 成功获取 {len(filenames)} 个文件。")
+        return set(filenames)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 WebDAV 获取文件列表失败: {e}")
+        return None
+
 def local_download_and_upload_to_webdav():
     """
     遍历to_stt目录, 寻找时长 > local_download_audio_seconds 的视频, 下载其音频并上传到WebDAV.
     """
     src_dir = QUEUE_DIR / "to_stt"
+    webdav_files = list_webdav_files(config['webdav_url'], config['webdav_username'], config['webdav_password'], logger, config.get('webdav_proxy'))
     
     input_files = sorted([f for f in src_dir.glob("*") if not f.name.startswith(".") and f.is_file()])
     if not input_files:
@@ -64,34 +93,6 @@ def local_download_and_upload_to_webdav():
         if not lines:
             logger.info(f"文件 {file_path.name} 为空，跳过。")
             continue
-
-        # 检查最后一行的视频是否已在WebDAV上，如果是，则跳过整个文件
-        try:
-            last_line_info = json.loads(lines[-1])
-            last_bvid = last_line_info.get('bvid')
-            if last_bvid:
-                filenames_to_check = [
-                    f"{last_bvid}_NA.mp3",
-                    f"{last_bvid}_1.mp3",
-                    f"{last_bvid}_01.mp3"
-                ]
-                file_exists_on_webdav = False
-                for filename in filenames_to_check:
-                    url = f"{config['webdav_url']}/{filename}"
-                    if check_webdav_file_exists(
-                        url,
-                        config['webdav_username'],
-                        config['webdav_password'],
-                        logger,
-                        webdav_proxy=config.get('webdav_proxy')
-                    ):
-                        logger.info(f"文件 {file_path.name} 的最后一个视频 {last_bvid} 已存在于WebDAV ({filename})，跳过整个文件。")
-                        file_exists_on_webdav = True
-                        break
-                if file_exists_on_webdav:
-                    continue
-        except json.JSONDecodeError:
-            logger.warning(f"无法解析文件 {file_path.name} 的最后一行，将继续处理文件内容。")
 
         line_to_process = None
 
@@ -118,14 +119,7 @@ def local_download_and_upload_to_webdav():
                     ]
                     file_exists = False
                     for filename in filenames_to_check:
-                        url = f"{config['webdav_url']}/{filename}"
-                        if check_webdav_file_exists(
-                            url, 
-                            config['webdav_username'], 
-                            config['webdav_password'], 
-                            logger, 
-                            webdav_proxy=config.get('webdav_proxy')
-                        ):
+                        if webdav_files is not None and filename in webdav_files:
                             logger.info(f"WebDAV上已存在文件: {filename}，跳过下载和上传。")
                             file_exists = True
                             break
@@ -162,6 +156,8 @@ def local_download_and_upload_to_webdav():
                                 # 上传后删除本地临时文件
                                 output_audio_path.unlink()
                                 logger.info(f"已删除本地临时文件: {output_audio_path}")
+                                if webdav_files is not None:
+                                    webdav_files.add(output_audio_path.name)
                         else:
                             logger.error(f"下载失败，未找到音频文件: {output_audio_path}")
                             # 下载失败，跳过此视频的处理
