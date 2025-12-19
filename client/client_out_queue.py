@@ -76,8 +76,8 @@ def out_queue(force: bool = False):
             break
         except Exception as e:
             logger.error(f"发生错误: {e}")
-            time.sleep(10)
             logger.info("10秒后重试...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     out_queue()
