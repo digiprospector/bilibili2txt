@@ -70,7 +70,7 @@ def download_from_webdav_requests(url: str, username: str, password: str, local_
 
 # 请将此函数添加到 common/webdav.py 文件中
 
-def delete_from_webdav_requests(url: str, username: str, password: str, logger) -> bool:
+def delete_from_webdav_requests(url: str, username: str, password: str, logger, webdav_proxy: str = None) -> bool:
     """
     使用 requests 从 WebDAV 服务器删除文件。
 
@@ -79,12 +79,21 @@ def delete_from_webdav_requests(url: str, username: str, password: str, logger) 
         username (str): WebDAV 用户名。
         password (str): WebDAV 密码。
         logger: 用于记录日志的 logger 对象。
+        webdav_proxy (str): WebDAV 代理地址。
 
     Returns:
         bool: 如果删除成功或文件不存在，则返回 True，否则返回 False。
     """
     try:
-        response = requests.delete(url, auth=(username, password), timeout=60)
+        proxies = None
+        if webdav_proxy:
+            proxies = {
+                "http": webdav_proxy,
+                "https": webdav_proxy,
+            }
+            logger.info(f"使用 WebDAV 代理: {webdav_proxy}")
+
+        response = requests.delete(url, auth=(username, password), timeout=60, proxies=proxies)
 
         # 204 No Content 表示成功删除
         if response.status_code == 204:

@@ -15,19 +15,26 @@ from webdav import delete_from_webdav_requests
 # Setup logger
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 
-def list_webdav_files(webdav_url, username, password):
+def list_webdav_files(webdav_url, username, password, webdav_proxy=None):
     """
     Lists all files in the given WebDAV directory using PROPFIND.
     Returns a list of full URLs for each file.
     """
     logger.info(f"Listing files from WebDAV server: {webdav_url}")
+    proxies = None
+    if webdav_proxy:
+        proxies = {
+            "http": webdav_proxy,
+            "https": webdav_proxy,
+        }
     try:
         response = requests.request(
             "PROPFIND",
             webdav_url,
             auth=(username, password),
             headers={"Depth": "1"},
-            timeout=30
+            timeout=30,
+            proxies=proxies
         )
         response.raise_for_status()
 
@@ -62,16 +69,17 @@ def clean_webdav():
     webdav_url = config.get('webdav_url')
     username = config.get('webdav_username')
     password = config.get('webdav_password')
+    webdav_proxy = config.get('webdav_proxy')
 
     if not all([webdav_url, username, password]):
         logger.error("WebDAV configuration (webdav_url, webdav_username, webdav_password) is missing in config.py.")
         return
 
-    files_to_delete = list_webdav_files(webdav_url, username, password)
+    files_to_delete = list_webdav_files(webdav_url, username, password, webdav_proxy)
 
     for file_url in files_to_delete:
         logger.info(f"Deleting file: {file_url}")
-        delete_from_webdav_requests(url=file_url, username=username, password=password, logger=logger)
+        delete_from_webdav_requests(url=file_url, username=username, password=password, logger=logger, webdav_proxy=webdav_proxy)
 
 if __name__ == "__main__":
     clean_webdav()
