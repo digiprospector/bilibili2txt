@@ -19,5 +19,8 @@ config = {
     "webdav_username": "webdav_username",
     "webdav_password": "webdav_password",
     #"webdav_proxy": "http://127.0.0.1:7897",
-    "local_download_audio_seconds": 1
+    "local_download_audio_seconds": 1,
+    "openai_api_key": "",
+    "openai_base_url": "",
+    "openai_model": "gemini-3.0-pro"
 }

@@ -1,10 +1,11 @@
 import argparse
 
-from client_out_queue import out_queue
+from client.out_queue import out_queue
 from push_data_repo import push_data_repo
 from generate_md import create_markdown_files_from_text
 from sync_to_netdisk import sync_to_netdisk
 from push_data_repo import push_data_repo
+from openai_chat import test_openai_api
 
 def main():
     parser = argparse.ArgumentParser(
@@ -18,6 +19,9 @@ def main():
     args = parser.parse_args()
     force = args.force
 
+    if not test_openai_api():
+        print("AI工作不正常,退出")
+        exit()
     out_queue(force)
     push_data_repo()
     create_markdown_files_from_text(force)

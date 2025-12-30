@@ -1,6 +1,6 @@
 from scrape import scrape
-from client_in_queue import in_queue
-from client_local_download_and_upload_to_webdav import local_download_and_upload_to_webdav
+from client.in_queue import in_queue
+from local_download_and_upload_to_webdav import local_download_and_upload_to_webdav
 
 def main():
     scrape()

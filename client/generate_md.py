@@ -11,6 +11,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
+from openai_chat import get_single_response
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -105,6 +106,10 @@ def create_markdown_files_from_text(force: bool = False):
             # 使用 pathlib 的便捷方法读取文本
             transcript = text_filepath.read_text(encoding='utf-8')
 
+            # AI总结
+
+            ai_markdown = get_single_response(f"你是一名专业的A股投资人,你看了一个视频,视频里的UP主说了下面的话,你把这些话总结一下.后面都是UP主的发言:{transcript}")
+
             # 构建 Markdown 内容
             md_content = f"""# {title}
 
@@ -117,7 +122,15 @@ def create_markdown_files_from_text(force: bool = False):
 
 ## tags
 
+
+
 ## 总结
+
+
+
+## AI总结
+
+{ai_markdown}
 
 ## 视频文稿
 
