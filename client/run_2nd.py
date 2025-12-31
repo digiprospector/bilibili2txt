@@ -1,6 +1,6 @@
 import argparse
 
-from client.out_queue import out_queue
+from out_queue import out_queue
 from push_data_repo import push_data_repo
 from generate_md import create_markdown_files_from_text
 from sync_to_netdisk import sync_to_netdisk
@@ -21,7 +21,7 @@ def main():
 
     if not test_openai_api():
         print("AI工作不正常,退出")
-        exit()
+        exit(-1)
     out_queue(force)
     push_data_repo()
     create_markdown_files_from_text(force)
