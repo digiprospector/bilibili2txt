@@ -2,6 +2,7 @@ from pathlib import Path
 from tqdm import tqdm
 import requests
 from requests.auth import HTTPBasicAuth
+from xml.etree import ElementTree
 
 def upload_to_webdav_requests(url, username, password, file_path: Path, logger, webdav_proxy: str = None):
     """
@@ -138,5 +139,31 @@ def check_webdav_file_exists(url: str, username: str, password: str, logger, web
         logger.error(f"检查 WebDAV 文件是否存在时发生网络错误 ({url}): {e}")
         return False
 
-
-    
+def list_webdav_files(url, username, password, logger, webdav_proxy=None):
+    "获取WebDAV服务器上指定路径下的文件列表"
+    logger.info(f"正在从 WebDAV 获取文件列表: {url}")
+    proxies = {'http': webdav_proxy, 'https': webdav_proxy} if webdav_proxy else None
+    try:
+        response = requests.request(
+            "PROPFIND",
+            url,
+            auth=(username, password),
+            headers={"Depth": "1"},
+            proxies=proxies,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        # 解析XML响应
+        root = ElementTree.fromstring(response.content)
+        # 命名空间通常是 {DAV:}
+        ns = {'d': 'DAV:'}
+        filenames = [Path(href.text).name for href in root.findall('.//d:href', ns)]
+        logger.info(f"从 WebDAV 成功获取 {len(filenames)} 个文件。 সন")
+        return set(filenames)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从 WebDAV 获取文件列表失败: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"解析 WebDAV 列表失败: {e}")
+        return None

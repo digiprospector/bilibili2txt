@@ -6,74 +6,31 @@ from pathlib import Path
 import sys
 import shutil
 import json
-import requests
-from xml.etree import ElementTree
 import yt_dlp
 
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str(SCRIPT_DIR.parent.absolute())) # 导入 upload.py
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
-from dp_logging import setup_logger
+# Ensure common is in path to import env
+SCRIPT_DIR = Path(__file__).resolve().parent
+COMMON_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.append(str(COMMON_DIR))
+
+# Import environment context
+try:
+    from env import config, setup_logger, get_path
+except ImportError:
+    print("Error: Could not import 'env' from common.")
+    sys.exit(1)
+
+# Import git utils and webdav (libs added by env)
 from git_utils import set_logger as git_utils_set_logger
-from webdav import upload_to_webdav_requests, check_webdav_file_exists
-# 日志
+from webdav import upload_to_webdav_requests, list_webdav_files
+
+# Setup logger
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 git_utils_set_logger(logger)
 
-# 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-
-def create_config_file():
-    if not CONFIG_FILE.exists():
-        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
-        try:
-            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
-        except Exception as e:
-            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
-            exit()
-create_config_file()
-
-def get_dir_in_config(key: str) -> Path:
-    dir_path_str = config[key]
-    if dir_path_str.startswith("/"):
-        dir_path = Path(dir_path_str)
-    else:
-        dir_path = SCRIPT_DIR.parent / dir_path_str
-    logger.debug(f"config[{key}] 的路径: {dir_path}")
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
-from config import config
-QUEUE_DIR = get_dir_in_config("queue_dir")
-TEMP_DIR = get_dir_in_config("temp_dir")
-
-def list_webdav_files(url, username, password, logger, webdav_proxy=None):
-    """获取WebDAV服务器上指定路径下的文件列表"""
-    logger.info(f"正在从 WebDAV 获取文件列表: {url}")
-    proxies = {'http': webdav_proxy, 'https': webdav_proxy} if webdav_proxy else None
-    try:
-        response = requests.request(
-            "PROPFIND",
-            url,
-            auth=(username, password),
-            headers={"Depth": "1"},
-            proxies=proxies,
-            timeout=30
-        )
-        response.raise_for_status()
-        
-        # 解析XML响应
-        root = ElementTree.fromstring(response.content)
-        # 命名空间通常是 {DAV:}
-        ns = {'d': 'DAV:'}
-        filenames = [Path(href.text).name for href in root.findall('.//d:href', ns)]
-        logger.info(f"从 WebDAV 成功获取 {len(filenames)} 个文件。")
-        return set(filenames)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"从 WebDAV 获取文件列表失败: {e}")
-        return None
+QUEUE_DIR = get_path("queue_dir")
+TEMP_DIR = get_path("temp_dir")
 
 def local_download_and_upload_to_webdav():
     """
@@ -89,7 +46,12 @@ def local_download_and_upload_to_webdav():
     
     found_and_processed = False
     for file_path in input_files:
-        lines = file_path.read_text(encoding='utf-8').splitlines()
+        try:
+            lines = file_path.read_text(encoding='utf-8').splitlines()
+        except Exception as e:
+            logger.error(f"无法读取文件 {file_path}: {e}")
+            continue
+
         if not lines:
             logger.info(f"文件 {file_path.name} 为空，跳过。")
             continue
@@ -137,8 +99,12 @@ def local_download_and_upload_to_webdav():
                         'retries': 10,
                         'continuedl': True,
                     }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([video_url])
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([video_url])
+                    except Exception as e:
+                        logger.error(f"下载视频 {bvid} 失败: {e}")
+                        continue
 
                     # 2. 上传到WebDAV
                     for output_audio_path in TEMP_DIR.glob(f"{bvid}_*.mp3"):
@@ -171,7 +137,7 @@ def local_download_and_upload_to_webdav():
                 continue
         
     if not found_and_processed:
-        logger.info("所有文件中未找到时长 > 1800s 的视频。")
+        logger.info(f"所有文件中未找到时长 > {config.get('local_download_audio_seconds', 1800)}s 的视频。")
 
 if __name__ == "__main__":
     local_download_and_upload_to_webdav()

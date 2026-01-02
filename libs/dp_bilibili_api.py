@@ -11,45 +11,28 @@ import urllib.parse
 import hashlib
 from pathlib import Path
 from tqdm import tqdm
+import shutil
 
 import sys
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
-from dp_logging import setup_logger
+# Ensure common is in path to import env
+SCRIPT_DIR = Path(__file__).resolve().parent
+COMMON_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.append(str(COMMON_DIR))
+
+try:
+    from env import config, setup_logger, get_path
+except ImportError:
+    # Fallback if env not found or other issues (e.g. run in weird context)
+    # Re-implement minimal needed or fail
+    print("Error: Could not import 'env' from common. Ensure project structure is correct.")
+    sys.exit(1)
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 
-# 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-
-def create_config_file():
-    if not CONFIG_FILE.exists():
-        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
-        try:
-            
-            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
-        except Exception as e:
-            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
-            exit()
-create_config_file()
-
-def get_dir_in_config(key: str) -> Path:
-    dir_path_str = config[key]
-    if dir_path_str.startswith("/"):
-        dir_path = Path(dir_path_str)
-    else:
-        dir_path = SCRIPT_DIR.parent / dir_path_str
-    logger.debug(f"config[{key}] 的路径: {dir_path}")
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
-from config import config
-USERDATA_DIR = get_dir_in_config("userdata_dir")
 class dp_bilibili:
-    def __init__(self, ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3", cookies=None, logger=None, retry_max=10, retry_interval=5):
+    def __init__(self, ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3", cookies=None, logger=None, retry_max=10, retry_interval=5, userdata_dir=None):
         """
         初始化 dp_bilibili API 客户端。
 
@@ -59,21 +42,20 @@ class dp_bilibili:
             logger (logging.Logger, optional): 日志记录器实例. 如果为 None, 将创建一个默认的. 默认为 None.
             retry_max (int, optional): API 请求失败时的最大重试次数. 默认为 10.
             retry_interval (int, optional): 每次重试之间的间隔时间（秒）. 默认为 5.
+            userdata_dir (Path, optional): 用户数据目录. 默认为 config["userdata_dir"].
         """
         self.ua = ua
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': self.ua})
         if cookies:
             self.session.cookies.update(cookies)
-        if logger:
-            self.logger = logger
-        else:
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(logging.INFO)
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+        
+        self.logger = logger if logger else logging.getLogger(__name__)
+        if not logger:
+             # Basic fallback setup if no logger provided and not configured externally
+             if not self.logger.handlers:
+                logging.basicConfig(level=logging.INFO)
+
         self.img_key = None
         self.sub_key = None
         self.groups = {}
@@ -82,6 +64,15 @@ class dp_bilibili:
         self.get_wbi_keys()
         self.mid = 0
         self.name = ""
+        
+        if userdata_dir:
+            self.userdata_dir = userdata_dir
+        else:
+            try:
+                self.userdata_dir = get_path("userdata_dir")
+            except Exception:
+                self.userdata_dir = Path("data/userdata")
+
 
     def login_by_qrcode(self) -> bool:
         """
@@ -640,30 +631,45 @@ def download_file_with_resume(session, url, file_path:Path):
 
 if __name__ == "__main__":
     cookies = {}
-    cookies_file = USERDATA_DIR / "bili_cookies.json"
+    try:
+        userdata_dir = get_path("userdata_dir")
+    except Exception:
+        userdata_dir = Path("data/userdata")
+        
+    cookies_file = userdata_dir / "bili_cookies.json"
     if cookies_file.exists():
         with open(cookies_file, "r") as f:
             cookies = json.load(f)
-    dp_blbl = dp_bilibili(cookies=cookies)
+    dp_blbl = dp_bilibili(cookies=cookies, userdata_dir=userdata_dir)
     if dp_blbl.login():
         gp = dp_blbl.get_following_groups()
         dp_blbl.logger.debug(f"关注分组: {gp}")
-        group_id, (group_name, ups_count) = next(iter(gp.items()))  # 获取第一个分组名称
-        dp_blbl.logger.info(f"第一个分组: {group_name}, ID: {group_id}, UP主数量: {ups_count}")
-        ups =dp_blbl.get_ups_in_group(group_id)
-        dp_blbl.logger.info(f"分组 {group_name} 中的UP主: {ups}")
-        up_id, up_name = next(iter(ups.items()))  # 获取第一个UP主
-        dp_blbl.logger.info(f"第一个UP主: {up_name}, ID: {up_id}")
-        videos = dp_blbl.get_videos_in_up(up_id)
-        dp_blbl.logger.info(f"UP主 {up_name} 的视频列表: {videos}")
-        bvid, title = next(iter(videos.items()))  # 获取第一个视频
-        dp_blbl.logger.info(f"第一个视频: {title}, BV号: {bvid}")
-        video_info = dp_blbl.get_video_info(bvid)
-        dp_blbl.logger.info(f"视频 {title} 的详细信息: {video_info}")
-        with open("video_info.json", "w") as f:
-            json.dump(video_info, f, ensure_ascii=False, indent=4)
-        dl_url = dp_blbl.get_audio_download_url(bvid, video_info['cid'])
-        dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
-        with open("download_url.json", "w") as f:
-            json.dump(dl_url, f, ensure_ascii=False, indent=4)
-        download_file_with_resume(dp_blbl.session, dl_url, Path(f"audio.m4s"))
+        if gp:
+            group_id, info = next(iter(gp.items())) 
+            group_name = info['name']
+            ups_count = info['count']
+            
+            dp_blbl.logger.info(f"第一个分组: {group_name}, ID: {group_id}, UP主数量: {ups_count}")
+            ups =dp_blbl.get_ups_in_group(group_id)
+            dp_blbl.logger.info(f"分组 {group_name} 中的UP主: {ups}")
+            if ups:
+                up_id, info = next(iter(ups.items()))
+                up_name = info['name']
+                dp_blbl.logger.info(f"第一个UP主: {up_name}, ID: {up_id}")
+                videos = dp_blbl.get_videos_in_up(up_id)
+                dp_blbl.logger.info(f"UP主 {up_name} 的视频列表: {videos}")
+                if videos:
+                    bvid, info = next(iter(videos.items()))
+                    title = info['title']
+                    dp_blbl.logger.info(f"第一个视频: {title}, BV号: {bvid}")
+                    video_info = dp_blbl.get_video_info(bvid)
+                    dp_blbl.logger.info(f"视频 {title} 的详细信息: {video_info}")
+                    with open("video_info.json", "w") as f:
+                        json.dump(video_info, f, ensure_ascii=False, indent=4)
+                    dl_url = dp_blbl.get_audio_download_url(bvid, video_info['cid'])
+                    dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
+                    with open("download_url.json", "w") as f:
+                        json.dump(dl_url, f, ensure_ascii=False, indent=4)
+                    download_file_with_resume(dp_blbl.session, dl_url, Path(f"audio.m4s"))
+        else:
+             dp_blbl.logger.info("没有关注分组")

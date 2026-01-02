@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 from pathlib import Path
 import shutil
@@ -6,64 +8,34 @@ import time
 import subprocess
 from datetime import datetime, timezone, timedelta
 import re
-
 import sys
 
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
-from dp_logging import setup_logger
+# Ensure common is in path to import env
+SCRIPT_DIR = Path(__file__).resolve().parent
+COMMON_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.append(str(COMMON_DIR))
+
+# Import environment context
+try:
+    from env import config, setup_logger, get_path
+except ImportError:
+    print("Error: Could not import 'env' from common.")
+    sys.exit(1)
+
+# Import libs (libs added by env)
 from dp_bilibili_api import dp_bilibili
 from webdav import download_from_webdav_requests
 
-# 日志
+# Setup logger
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 
-# Get the directory where the script is located
-SCRIPT_DIR = Path(__file__).parent.resolve()
-
-# 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-
-def create_config_file():
-    if not CONFIG_FILE.exists():
-        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
-        try:
-            
-            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
-        except Exception as e:
-            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
-            exit()
-create_config_file()
-
-def get_dir_in_config(key: str) -> Path:
-    dir_path_str = config[key]
-    if dir_path_str.startswith("/"):
-        dir_path = Path(dir_path_str)
-    else:
-        dir_path = SCRIPT_DIR.parent / dir_path_str
-    logger.debug(f"config[{key}] 的路径: {dir_path}")
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
-def get_path_in_config(key: str) -> Path:
-    path_str = config[key]
-    if path_str.startswith("/"):
-        _path = Path(path_str)
-    else:
-        _path = SCRIPT_DIR.parent / path_str
-    logger.debug(f"config[{key}] 的路径: {_path}")
-    return _path
-
-from config import config
-
-TEMP_DIR = get_dir_in_config("temp_dir")
+TEMP_DIR = get_path("temp_dir")
 TEMP_MP3 = TEMP_DIR / "audio.mp3"
 TEMP_SRT = TEMP_MP3.with_suffix(".srt")
 TEMP_TEXT = TEMP_MP3.with_suffix(".text")
 TEMP_TXT = TEMP_MP3.with_suffix(".txt")
-FAST_WHISPER = get_path_in_config("server_faster_whisper_path")
+FAST_WHISPER = get_path("server_faster_whisper_path", create_dir=False)
 OUTPUT_DIR = TEMP_DIR / "server_text"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

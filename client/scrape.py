@@ -3,55 +3,39 @@
 
 from pathlib import Path
 import json
-import shutil
 import time
 import sqlite3
 import argparse
-
 import sys
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
+
+# Ensure common is in path to import env
+SCRIPT_DIR = Path(__file__).resolve().parent
+COMMON_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.append(str(COMMON_DIR))
+
+# Import environment context (config, logger, paths)
+try:
+    from env import config, setup_logger, get_path
+except ImportError:
+    print("Error: Could not import 'env' from common.")
+    sys.exit(1)
+
+# Import from libs (libs is added to path by env)
 from dp_bilibili_api import dp_bilibili
-from dp_logging import setup_logger
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
 
-# 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-
-def create_config_file():
-    if not CONFIG_FILE.exists():
-        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
-        try:
-            
-            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
-        except Exception as e:
-            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
-            exit()
-create_config_file()
-
-def get_dir_in_config(key: str) -> Path:
-    dir_path_str = config[key]
-    if dir_path_str.startswith("/"):
-        dir_path = Path(dir_path_str)
-    else:
-        dir_path = SCRIPT_DIR.parent / dir_path_str
-    logger.debug(f"config[{key}] 的路径: {dir_path}")
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
-from config import config
-USERDATA_DIR = get_dir_in_config("userdata_dir")
+USERDATA_DIR = get_path("userdata_dir")
 DB_FILE = USERDATA_DIR / "bilibili_videos.db"
-TARGET_GROUPS = config["target_group"]
+TARGET_GROUPS = config.get("target_group", [])
 if isinstance(TARGET_GROUPS, str):
     TARGET_GROUPS = [TARGET_GROUPS]
-DEBUG = config["debug"]
-TEMP_DIR = get_dir_in_config("temp_dir")
-NEW_VIDEO_LIST_DIR = get_dir_in_config("new_video_list_dir")
+DEBUG = config.get("debug", False)
+TEMP_DIR = get_path("temp_dir")
+NEW_VIDEO_LIST_DIR = get_path("new_video_list_dir")
+
 
 def setup_database():
     """初始化数据库和表"""
