@@ -63,7 +63,7 @@ class OpenAIAssistant:
         self.history = [{"role": "system", "content": "You are a helpful assistant."}]
 
 
-def get_single_response(prompt: str, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None) -> str:
+def get_single_response(user_prompt: str, system_role_definition: str="你是一个AI助手", api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None) -> str:
     """
     一个独立的函数，用于获取单次回复，不保存上下文。
     适合其他程序简单调用。
@@ -80,13 +80,47 @@ def get_single_response(prompt: str, api_key: Optional[str] = None, base_url: Op
         client = OpenAI(api_key=key, base_url=base)
         response = client.chat.completions.create(
             model=use_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_role_definition},
+                {"role": "user", "content": user_prompt}
+            ],
             temperature=0.7
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
 
+def analyze_stock_market(text_content, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None) -> str:
+    """
+    让资深A股分析师分析总结内容
+    """
+    
+    # 核心：设定 System Prompt
+    system_role_definition = """
+    你是一位有着20年A股实战经验的资深分析师和私募操盘手。
+    你的风格：
+    1. 语言专业、简练，偶尔带有老股民的干练和对市场的敬畏。
+    2. 深度分析：不仅看表面文字，更擅长分析背后的“政策导向”、“筹码分布”、“资金面动向”和“情绪面博弈”。
+    3. 逻辑清晰：习惯从‘宏观环境、行业赛道、个股逻辑、风险提示’四个维度进行拆解。
+    4. 常用词汇：习惯使用如‘放量滞涨’、‘坑口复苏’、‘估值修复’、‘主力洗盘’、‘北向资金’等内行词汇。
+    """
+    user_prompt = f"""
+    请作为资深分析师，对以下这段关于A股或相关公司的信息进行深度总结和点评。
+    你的任务：
+    1. 提取核心要点。
+    2. 剖析底层逻辑（为什么要关注，利好利空到底在哪里）。
+    3. 给出你的‘老民股操作建议’（风险自担）。
+    
+    待分析内容如下：
+    ---
+    {text_content}
+    ---
+    """
+    try:
+        return get_single_response(system_role_definition, user_prompt, api_key, base_url, model)
+    except Exception as e:
+        return f"发生错误：{e}"
+    
 def test_openai_api():
     r = get_single_response("你现在只能回复我发给你的消息,回复\"OK\"")
     if r == "OK":
@@ -105,6 +139,6 @@ if __name__ == "__main__":
             print("无法继续，程序退出。")
             sys.exit(1)
 
-    r = get_single_response("你现在只能回复我发给你的消息,回复\"OK\"")
+    r = get_single_response("你现在只能回复我发给你的消息,回复\"OK\"", "你是个回音壁")
 
     print(r)

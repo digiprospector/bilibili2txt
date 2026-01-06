@@ -11,7 +11,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
-from openai_chat import get_single_response
+from openai_chat import analyze_stock_market
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -108,7 +108,8 @@ def create_markdown_files_from_text(force: bool = False):
 
             # AI总结
 
-            ai_markdown = get_single_response(f"你是一名专业的A股投资人,你看了一个视频,视频里的UP主说了下面的话,你把这些话总结一下.后面都是UP主的发言:{transcript}")
+            ai_markdown = analyze_stock_market(f"{transcript}")
+            ai_markdown = ai_markdown.replace("**“", " **“")
 
             # 构建 Markdown 内容
             md_content = f"""# {title}
