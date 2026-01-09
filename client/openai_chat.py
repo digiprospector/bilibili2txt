@@ -109,7 +109,6 @@ def analyze_stock_market(text_content, api_key: Optional[str] = None, base_url: 
     你的任务：
     1. 提取核心要点。
     2. 剖析底层逻辑（为什么要关注，利好利空到底在哪里）。
-    3. 给出你的‘老民股操作建议’（风险自担）。
     
     待分析内容如下：
     ---

@@ -77,6 +77,8 @@ def sync_to_netdisk():
             # 3. 检查目录名是否为 YYYY-MM-DD 格式
             date_str = source_subdir.name
             if re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_str):
+                year = date_str[:4]        # "YYYY"
+                month = date_str[5:7]      # "MM"
                 year_month = date_str[:7]  # "YYYY-MM"
                 day = date_str[8:10]       # "DD"
 
@@ -86,6 +88,13 @@ def sync_to_netdisk():
 
                     # 5. 移除文件名中可能存在的时间戳部分, e.g., "[2020-03-03_16-39-42]"
                     new_filename = re.sub(r'^\[.*?\]', '', filename)
+
+                    # 6. 按年/月/日的目录也有可能
+                    dest_file_path = dest_root_dir / year/ month / day / new_filename
+
+                    if dest_file_path.exists():
+                        logger.debug(f"跳过 (已存在,按年/月/日的目录): {dest_file_path}")
+                        continue
 
                     # 6. 构建目标路径
                     dest_day_dir = dest_root_dir / year_month / day
