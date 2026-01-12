@@ -4,6 +4,7 @@
 from pathlib import Path
 import shutil
 import re
+import argparse
 
 import sys
 SCRIPT_DIR = Path(__file__).parent
@@ -42,7 +43,7 @@ def get_dir_in_config(key: str) -> Path:
 
 from config import config
 
-def sync_to_netdisk():
+def sync_to_netdisk(force=False):
     """
     将 markdown 目录下的文件根据文件名中的日期进行整理，
     并复制到用户的“文档/我的坚果云/markdown”目录下。
@@ -90,20 +91,20 @@ def sync_to_netdisk():
                     new_filename = re.sub(r'^\[.*?\]', '', filename)
 
                     # 6. 按年/月/日的目录也有可能
-                    dest_file_path = dest_root_dir / year/ month / day / new_filename
+                    dest_file_path = dest_root_dir / year / month / day / new_filename
 
                     if dest_file_path.exists():
-                        logger.debug(f"跳过 (已存在,按年/月/日的目录): {dest_file_path}")
-                        continue
-
-                    # 6. 构建目标路径
-                    dest_day_dir = dest_root_dir / year_month / day
-                    dest_file_path = dest_day_dir / new_filename
+                        if not force:
+                            logger.debug(f"跳过 (已存在,按年/月/日的目录): {dest_file_path}")
+                            continue
+                    else:
+                        # 6. 构建新目标路径
+                        dest_file_path = dest_root_dir / year_month / day / new_filename
 
                     # 7. 如果目标文件不存在，则创建目录并复制
-                    if not dest_file_path.exists():
+                    if force or not dest_file_path.exists():
                         logger.info(f"复制: {source_file.relative_to(source_dir)}")
-                        dest_day_dir.mkdir(parents=True, exist_ok=True)
+                        dest_file_path.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(source_file, dest_file_path)
                         logger.info(f"  -> 至: {dest_file_path}")
                     else:
@@ -115,5 +116,9 @@ def sync_to_netdisk():
         logger.info(f"处理过程中发生错误: {e}")
 
 if __name__ == "__main__":
-    sync_to_netdisk()
+    parser = argparse.ArgumentParser(description="同步Markdown文件到网盘")
+    parser.add_argument("-f", "--force", action="store_true", help="强制覆盖已存在的文件")
+    args = parser.parse_args()
+
+    sync_to_netdisk(force=args.force)
     logger.info("处理完成。")
