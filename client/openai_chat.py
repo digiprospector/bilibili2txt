@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Optional
 from openai import OpenAI, OpenAIError
+import argparse
 
 SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
@@ -116,7 +117,7 @@ def analyze_stock_market(text_content, api_key: Optional[str] = None, base_url: 
     ---
     """
     try:
-        return get_single_response(system_role_definition, user_prompt, api_key, base_url, model)
+        return get_single_response(user_prompt, system_role_definition, api_key, base_url, model)
     except Exception as e:
         return f"发生错误：{e}"
     
@@ -128,7 +129,11 @@ def test_openai_api():
         return False
 
 if __name__ == "__main__":
-        # 检查配置
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", type=str, help="指定BVID进行分析")
+    args = parser.parse_args()
+
+    # 检查配置
     if not config.get("openai_api_key"):
         print("警告: config.py 中未检测到 openai_api_key。")
         key_input = input("请输入你的 OpenAI API Key: ").strip()
@@ -138,6 +143,22 @@ if __name__ == "__main__":
             print("无法继续，程序退出。")
             sys.exit(1)
 
-    r = get_single_response("你现在只能回复我发给你的消息,回复\"OK\"", "你是个回音壁")
-
-    print(r)
+    if args.m:
+        bvid = args.m
+        save_text_dir = SCRIPT_DIR.parent / config.get("save_text_dir", "data/save_text")
+        target_file = next((f for f in save_text_dir.glob("*.text") if bvid in f.name), None)
+        
+        if target_file:
+            print(f"正在分析文件: {target_file.name}")
+            content = target_file.read_text(encoding='utf-8')
+            result = analyze_stock_market(content)
+            temp_dir = SCRIPT_DIR.parent / config.get("temp_dir", "data/temp")
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            output_file = temp_dir / f"ai_summary.txt"
+            output_file.write_text(result, encoding='utf-8')
+            print(f"分析结果已保存到: {output_file}")
+        else:
+            print(f"未找到包含 BVID {bvid} 的文件 (搜索路径: {save_text_dir})")
+    else:
+        r = get_single_response("你现在只能回复我发给你的消息,回复\"OK\"", "你是个回音壁")
+        print(r)

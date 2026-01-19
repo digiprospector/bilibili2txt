@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 import requests
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 
 # Add project directories to sys.path
 SCRIPT_DIR = Path(__file__).parent
@@ -77,9 +78,10 @@ def clean_webdav():
 
     files_to_delete = list_webdav_files(webdav_url, username, password, webdav_proxy)
 
-    for file_url in files_to_delete:
-        logger.info(f"Deleting file: {file_url}")
-        delete_from_webdav_requests(url=file_url, username=username, password=password, logger=logger, webdav_proxy=webdav_proxy)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for file_url in files_to_delete:
+            logger.info(f"Deleting file: {file_url}")
+            executor.submit(delete_from_webdav_requests, url=file_url, username=username, password=password, logger=logger, webdav_proxy=webdav_proxy)
 
 if __name__ == "__main__":
     clean_webdav()
