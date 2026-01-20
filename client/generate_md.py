@@ -4,7 +4,6 @@
 from pathlib import Path
 import shutil
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import sys
 SCRIPT_DIR = Path(__file__).parent
@@ -149,18 +148,13 @@ def create_markdown_files_from_text(force: bool = False):
     processed_count = 0
     skipped_count = 0
     
-    # 使用 ThreadPoolExecutor 并行处理
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = []
-        for text_filepath in source_path.glob("*.text"):
-            futures.append(executor.submit(process_single_file, text_filepath, filename_pattern, force))
-        
-        for future in as_completed(futures):
-            result = future.result()
-            if result == "processed":
-                processed_count += 1
-            elif result == "skipped":
-                skipped_count += 1
+    # 使用 顺序处理
+    for text_filepath in source_path.glob("*.text"):
+        result = process_single_file(text_filepath, filename_pattern, force)
+        if result == "processed":
+            processed_count += 1
+        elif result == "skipped":
+            skipped_count += 1
     
     logger.info(f"\n处理完成，共创建了 {processed_count} 个 Markdown 文件，跳过了 {skipped_count} 个已存在的文件。")
 

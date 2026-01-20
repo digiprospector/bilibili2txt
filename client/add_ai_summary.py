@@ -1,7 +1,6 @@
 from pathlib import Path
 import re
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai_chat import analyze_stock_market
 
 def generate_and_insert_summary(file_path, content, debug=False):
@@ -56,61 +55,48 @@ def check_markdown_titles(root_dir, debug=False):
 
     print(f"正在扫描目录: {root_path} ...\n")
 
-    executor = ThreadPoolExecutor(max_workers=4) if not debug else None
-    futures = []
-
     try:
+        found_files_list = []
         for file_path in root_path.rglob("*"):
             if file_path.is_file() and file_path.suffix.lower() == '.md':
-                try:
-                    content = file_path.read_text(encoding='utf-8')
+                found_files_list.append(file_path)
+
+        for file_path in found_files_list:
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                
+                if pattern.search(content):
+                    print(f"[✅ 包含] {file_path}")
+                    found_files.append(file_path)
+                else:
+                    print(f"[❌ 缺失] {file_path}")
+                    missing_files.append(file_path)
+                    generate_and_insert_summary(file_path, content, debug=debug)
+                    if debug:
+                        return
                     
+            except UnicodeDecodeError:
+                # 尝试使用 GBK 读取，以防是旧的 Windows 文件
+                try:
+                    content = file_path.read_text(encoding='gbk')
                     if pattern.search(content):
                         print(f"[✅ 包含] {file_path}")
                         found_files.append(file_path)
                     else:
                         print(f"[❌ 缺失] {file_path}")
                         missing_files.append(file_path)
+                        generate_and_insert_summary(file_path, content, debug=debug)
                         if debug:
-                            generate_and_insert_summary(file_path, content, debug=debug)
                             return
-                        else:
-                            futures.append(executor.submit(generate_and_insert_summary, file_path, content, debug))
-                        
-                except UnicodeDecodeError:
-                    # 尝试使用 GBK 读取，以防是旧的 Windows 文件
-                    try:
-                        content = file_path.read_text(encoding='gbk')
-                        if pattern.search(content):
-                            print(f"[✅ 包含] {file_path}")
-                            found_files.append(file_path)
-                        else:
-                            print(f"[❌ 缺失] {file_path}")
-                            missing_files.append(file_path)
-                            if debug:
-                                generate_and_insert_summary(file_path, content, debug=debug)
-                                return
-                            else:
-                                futures.append(executor.submit(generate_and_insert_summary, file_path, content, debug))
-                    except Exception as e:
-                        print(f"[⚠️ 错误] 无法读取 {file_path}: {e}")
-                        error_files.append(file_path)
                 except Exception as e:
                     print(f"[⚠️ 错误] 无法读取 {file_path}: {e}")
                     error_files.append(file_path)
-        
-        if futures:
-            print(f"\n正在并行处理 {len(futures)} 个任务...")
-            for future in as_completed(futures):
-                pass
+            except Exception as e:
+                print(f"[⚠️ 错误] 无法读取 {file_path}: {e}")
+                error_files.append(file_path)
     except KeyboardInterrupt:
-        print("\n[!] 用户强制中断，正在取消剩余任务...")
-        for f in futures:
-            f.cancel()
+        print("\n[!] 用户强制中断")
         raise
-    finally:
-        if executor:
-            executor.shutdown(wait=True)
 
     # 输出统计结果
     print("\n" + "="*30)

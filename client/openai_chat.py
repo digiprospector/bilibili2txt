@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
 import sys
+import time
 from pathlib import Path
 from typing import List, Dict, Optional
 from openai import OpenAI, OpenAIError
@@ -12,6 +12,17 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from config import config
 
+def get_openai_config():
+    """根据 select_open_ai 获取 OpenAI 配置"""
+    select_name = config.get("select_open_ai")
+    for item in config.get("open_ai_list", []):
+        if item.get("openai_api_name") == select_name:
+            return item
+    return {}
+
+# 全局变量记录上一次请求时间
+_last_request_time = 0
+
 class OpenAIAssistant:
     """
     一个用于与OpenAI API交互的类，支持上下文记忆。
@@ -19,18 +30,21 @@ class OpenAIAssistant:
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None):
         """
         初始化助手。
-        :param api_key: OpenAI API Key。如果为None，将尝试从 config.py 获取。
-        :param base_url: OpenAI Base URL。如果为None，将尝试从 config.py 获取。
-        :param model: 使用的模型名称。如果为None，将尝试从 config.py 获取，默认为 gpt-3.5-turbo。
+        :param api_key: OpenAI API Key。如果为None，将尝试根据 config['select_open_ai'] 获取。
+        :param base_url: OpenAI Base URL。如果为None，将尝试根据 config['select_open_ai'] 获取。
+        :param model: 使用的模型名称。如果为None，将尝试根据 config['select_open_ai'] 获取。
         """
-        self.api_key = api_key or config.get("openai_api_key")
-        self.base_url = base_url or config.get("openai_base_url")
+        selected_config = get_openai_config()
+        
+        self.api_key = api_key or selected_config.get("openai_api_key")
+        self.base_url = base_url or selected_config.get("openai_base_url")
+        self.model = model or selected_config.get("openai_model", "gpt-3.5-turbo")
+        self.interval = float(selected_config.get("interval", 0))
 
         if not self.api_key:
-            raise ValueError("未找到 API Key。请传入 api_key 参数或在 config.py 中设置 openai_api_key。")
+            raise ValueError("未找到 API Key。请检查 config.py 中的 select_open_ai 和 open_ai_list。")
         
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        self.model = model or config.get("openai_model", "gpt-3.5-turbo")
         # 初始化对话历史，可以根据需要添加系统提示词(System Prompt)
         self.history: List[Dict[str, str]] = [
             {"role": "system", "content": "You are a helpful assistant."}
@@ -42,6 +56,12 @@ class OpenAIAssistant:
         :param user_input: 用户的输入文本。
         :return: 模型的回复文本。
         """
+        global _last_request_time
+        # 频率限制
+        elapsed = time.time() - _last_request_time
+        if elapsed < self.interval:
+            time.sleep(self.interval - elapsed)
+
         self.history.append({"role": "user", "content": user_input})
 
         try:
@@ -50,6 +70,7 @@ class OpenAIAssistant:
                 messages=self.history,
                 temperature=0.7
             )
+            _last_request_time = time.time()
             
             print(response)
             reply = response.choices[0].message.content
@@ -69,14 +90,22 @@ def get_single_response(user_prompt: str, system_role_definition: str="你是一
     一个独立的函数，用于获取单次回复，不保存上下文。
     适合其他程序简单调用。
     """
+    global _last_request_time
     try:
-        # 如果没有传入key，尝试从config获取
-        key = api_key or config.get("openai_api_key")
-        base = base_url or config.get("openai_base_url")
-        use_model = model or config.get("openai_model", "gpt-3.5-turbo")
+        selected_config = get_openai_config()
         
+        key = api_key or selected_config.get("openai_api_key")
+        base = base_url or selected_config.get("openai_base_url")
+        use_model = model or selected_config.get("openai_model", "gpt-3.5-turbo")
+        interval = float(selected_config.get("interval", 0))
+
         if not key:
-            return "Error: API Key missing."
+            return "Error: API Key missing. 请检查 config.py 中的 select_open_ai 和 open_ai_list。"
+
+        # 频率限制
+        elapsed = time.time() - _last_request_time
+        if elapsed < interval:
+            time.sleep(interval - elapsed)
 
         client = OpenAI(api_key=key, base_url=base)
         response = client.chat.completions.create(
@@ -87,6 +116,7 @@ def get_single_response(user_prompt: str, system_role_definition: str="你是一
             ],
             temperature=0.7
         )
+        _last_request_time = time.time()
         return response.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
