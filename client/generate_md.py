@@ -4,6 +4,7 @@
 from pathlib import Path
 import shutil
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import sys
 SCRIPT_DIR = Path(__file__).parent
@@ -11,7 +12,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
-from openai_chat import analyze_stock_market
+from ai_utils import get_all_ai_configs, analyze_stock_market
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -81,9 +82,35 @@ def process_single_file(text_filepath, filename_pattern, force):
         # 使用 pathlib 的便捷方法读取文本
         transcript = text_filepath.read_text(encoding='utf-8')
 
-        # AI总结
-        ai_markdown = analyze_stock_market(f"{transcript}")
-        ai_markdown = ai_markdown.replace("**“", " **“")
+        # AI总结 - 使用所有可用的 AI 配置进行并行处理
+        ai_configs = get_all_ai_configs()
+        all_summaries = []
+        
+        def get_summary(config_item):
+            name = config_item.get("openai_api_name", "Unknown")
+            try:
+                summary = analyze_stock_market(f"{transcript}", ai_config=config_item)
+                summary = summary.replace("**“", " **“")
+                return name, summary
+            except Exception as e:
+                return name, f"Error: {str(e)}"
+
+        logger.debug(f"正在使用 {len(ai_configs)} 个 AI API 进行分析...")
+        with ThreadPoolExecutor(max_workers=len(ai_configs)) as executor:
+            future_to_config = {executor.submit(get_summary, cfg): cfg for cfg in ai_configs}
+            # 为了保持顺序，我们可以先存储结果到字典
+            results_map = {}
+            for future in as_completed(future_to_config):
+                name, summary = future.result()
+                results_map[name] = summary
+        
+        # 按照配置文件的顺序排列结果
+        for cfg in ai_configs:
+            name = cfg.get("openai_api_name", "Unknown")
+            summary = results_map.get(name, "No response")
+            all_summaries.append(f"### {name}\n\n{summary}")
+
+        ai_markdown = "\n\n---\n\n".join(all_summaries)
 
         # 构建 Markdown 内容
         md_content = f"""# {title}
