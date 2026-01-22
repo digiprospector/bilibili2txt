@@ -12,7 +12,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
-from ai_utils import get_all_ai_configs, analyze_stock_market
+from ai_utils import get_all_ai_configs, analyze_stock_market, get_all_ai_summaries
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -83,34 +83,8 @@ def process_single_file(text_filepath, filename_pattern, force):
         transcript = text_filepath.read_text(encoding='utf-8')
 
         # AI总结 - 使用所有可用的 AI 配置进行并行处理
-        ai_configs = get_all_ai_configs()
-        all_summaries = []
-        
-        def get_summary(config_item):
-            name = config_item.get("openai_api_name", "Unknown")
-            try:
-                summary = analyze_stock_market(f"{transcript}", ai_config=config_item)
-                summary = summary.replace("**“", " **“")
-                return name, summary
-            except Exception as e:
-                return name, f"Error: {str(e)}"
-
-        logger.debug(f"正在使用 {len(ai_configs)} 个 AI API 进行分析...")
-        with ThreadPoolExecutor(max_workers=len(ai_configs)) as executor:
-            future_to_config = {executor.submit(get_summary, cfg): cfg for cfg in ai_configs}
-            # 为了保持顺序，我们可以先存储结果到字典
-            results_map = {}
-            for future in as_completed(future_to_config):
-                name, summary = future.result()
-                results_map[name] = summary
-        
-        # 按照配置文件的顺序排列结果
-        for cfg in ai_configs:
-            name = cfg.get("openai_api_name", "Unknown")
-            summary = results_map.get(name, "No response")
-            all_summaries.append(f"### {name}\n\n{summary}")
-
-        ai_markdown = "\n\n---\n\n".join(all_summaries)
+        logger.debug(f"正在调用 AI 总结 (包含所有可用 API)...")
+        ai_markdown = get_all_ai_summaries(transcript)
 
         # 构建 Markdown 内容
         md_content = f"""# {title}
@@ -141,7 +115,9 @@ def process_single_file(text_filepath, filename_pattern, force):
         # 使用 pathlib 的便捷方法写入文本
         md_filepath.write_text(md_content, encoding='utf-8')
         
-        logger.info(f"  - [成功] 已为 '{filename}' 创建 Markdown 文件: '{md_filepath.name}'")
+        ai_names = [cfg.get("openai_api_name", "Unknown") for cfg in get_all_ai_configs()]
+        ai_names_str = ", ".join(ai_names)
+        logger.info(f"  - [成功] (AI: {ai_names_str}) 已为 '{filename}' 创建 Markdown 文件: '{md_filepath.name}'")
         return "processed"
 
     except Exception as e:
@@ -175,13 +151,32 @@ def create_markdown_files_from_text(force: bool = False):
     processed_count = 0
     skipped_count = 0
     
-    # 使用 顺序处理
-    for text_filepath in source_path.glob("*.text"):
-        result = process_single_file(text_filepath, filename_pattern, force)
-        if result == "processed":
-            processed_count += 1
-        elif result == "skipped":
-            skipped_count += 1
+    # 获取所有的 .text 文件
+    text_files = list(source_path.glob("*.text"))
+    if not text_files:
+        logger.info("没有发现需要处理的 .text 文件。")
+        return
+
+    # 并行处理视频文件
+    # 设置合理的线程数，这里设置为 AI 配置的数量，因为主要的瓶颈在 AI 请求
+    ai_configs = get_all_ai_configs()
+    max_workers = len(ai_configs) if ai_configs else 4
+    
+    logger.info(f"正在启动并行处理，线程数: {max_workers}...")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {executor.submit(process_single_file, fp, filename_pattern, force): fp for fp in text_files}
+        
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                result = future.result()
+                if result == "processed":
+                    processed_count += 1
+                elif result == "skipped":
+                    skipped_count += 1
+            except Exception as e:
+                logger.error(f"处理文件 {file_path.name} 时发生预期外错误: {e}")
     
     logger.info(f"\n处理完成，共创建了 {processed_count} 个 Markdown 文件，跳过了 {skipped_count} 个已存在的文件。")
 

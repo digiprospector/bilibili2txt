@@ -1,7 +1,13 @@
 from pathlib import Path
 import re
 import argparse
-from openai_chat import analyze_stock_market
+import sys
+# 添加路径
+SCRIPT_DIR = Path(__file__).parent
+sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
+sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
+
+from ai_utils import get_all_ai_summaries
 
 def generate_and_insert_summary(file_path, content, debug=False):
     """
@@ -9,14 +15,13 @@ def generate_and_insert_summary(file_path, content, debug=False):
     """
     transcript_match = re.search(r"^##\s+视频文稿", content, re.MULTILINE)
     if transcript_match:
-        print("  -> 正在调用 AI 生成总结...")
+        print("  -> 正在调用 AI (所有可用 API) 生成总结...")
         transcript = content[transcript_match.end():].strip()
         try:
-            summary = analyze_stock_market(transcript)
+            summary = get_all_ai_summaries(transcript)
             if summary:
-                summary = summary.replace("**“", " **“")
                 # 插入到 '## 视频文稿' 之前
-                new_content = content[:transcript_match.start()] + f"\n\n## AI总结\n\n{summary}\n\n" + content[transcript_match.start():]
+                new_content = content[:transcript_match.start()] + f"## AI总结\n\n{summary}\n\n" + content[transcript_match.start():]
                 
                 if debug:
                     debug_path = file_path.with_name(f"{file_path.stem}_debug{file_path.suffix}")

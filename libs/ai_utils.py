@@ -15,6 +15,7 @@ sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from config import config
 
 from openai import OpenAI, OpenAIError, APIStatusError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ============== 常量定义 ==============
@@ -219,3 +220,43 @@ def is_ai_response_error(response: str) -> bool:
         if kw in response:
             return True
     return False
+
+
+def get_all_ai_summaries(
+    content: str,
+    system_prompt: str = STOCK_ANALYST_SYSTEM_PROMPT
+) -> str:
+    """
+    使用所有可用的 AI API 生成总结 (并行处理)
+    :param content: 待分析的内容
+    :param system_prompt: 系统提示词
+    :return: 包含所有 AI 总结的 Markdown 字符串
+    """
+    ai_configs = get_all_ai_configs()
+    if not ai_configs:
+        return analyze_stock_market(content) # 退回到默认行为
+
+    def _get_single_summary(cfg):
+        name = cfg.get("openai_api_name", "Unknown")
+        try:
+            summary = analyze_stock_market(content, ai_config=cfg)
+            summary = summary.replace("**“", " **“")
+            return name, summary
+        except Exception as e:
+            return name, f"Error: {str(e)}"
+
+    results_map = {}
+    with ThreadPoolExecutor(max_workers=len(ai_configs)) as executor:
+        future_to_config = {executor.submit(_get_single_summary, cfg): cfg for cfg in ai_configs}
+        for future in as_completed(future_to_config):
+            name, summary = future.result()
+            results_map[name] = summary
+    
+    # 按照配置文件的顺序排列结果
+    all_summaries = []
+    for cfg in ai_configs:
+        name = cfg.get("openai_api_name", "Unknown")
+        summary = results_map.get(name, "No response")
+        all_summaries.append(f"### {name}\n\n{summary}")
+
+    return "\n\n---\n\n".join(all_summaries)
