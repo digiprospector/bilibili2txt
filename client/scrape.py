@@ -8,24 +8,13 @@ import sqlite3
 import argparse
 import sys
 
-# Ensure common is in path to import env
-SCRIPT_DIR = Path(__file__).resolve().parent
-COMMON_DIR = SCRIPT_DIR.parent / "common"
-if str(COMMON_DIR) not in sys.path:
-    sys.path.append(str(COMMON_DIR))
+from bootstrap import config, get_path, get_standard_logger
 
-# Import environment context (config, logger, paths)
-try:
-    from env import config, setup_logger, get_path
-except ImportError:
-    print("Error: Could not import 'env' from common.")
-    sys.exit(1)
-
-# Import from libs (libs is added to path by env)
+# Import from libs (libs is added to path by bootstrap)
 from dp_bilibili_api import dp_bilibili
 
 # 日志
-logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
+logger = get_standard_logger(__file__)
 
 USERDATA_DIR = get_path("userdata_dir")
 DB_FILE = USERDATA_DIR / "bilibili_videos.db"
@@ -117,7 +106,6 @@ def process_video(conn, dp_blbl, video_info, all_new_videos):
         
         if save_video_to_database(conn, video_info):
             all_new_videos.append(video_info)
-            time.sleep(config.get('request_interval', 1))
             return True
     return False
 

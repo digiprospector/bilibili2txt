@@ -7,24 +7,13 @@ import sys
 import shutil
 import argparse
 
-# Ensure common is in path to import env
-SCRIPT_DIR = Path(__file__).resolve().parent
-COMMON_DIR = SCRIPT_DIR.parent / "common"
-if str(COMMON_DIR) not in sys.path:
-    sys.path.append(str(COMMON_DIR))
+from bootstrap import get_path, get_standard_logger
 
-# Import environment context
-try:
-    from env import config, setup_logger, get_path
-except ImportError:
-    print("Error: Could not import 'env' from common.")
-    sys.exit(1)
-
-# Import git utils (libs added by env)
+# Import git utils (libs added by bootstrap)
 from git_utils import reset_repo, push_changes, set_logger as git_utils_set_logger
 
 # 日志
-logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
+logger = get_standard_logger(__file__)
 git_utils_set_logger(logger)
 
 QUEUE_DIR = get_path("queue_dir")

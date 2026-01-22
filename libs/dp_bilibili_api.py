@@ -61,6 +61,9 @@ class dp_bilibili:
         self.groups = {}
         self.retry_max = retry_max
         self.retry_interval = retry_interval
+        self.request_interval = config.get('request_interval', 1)
+        self.last_request_time = 0
+        
         self.get_wbi_keys()
         self.mid = 0
         self.name = ""
@@ -72,6 +75,17 @@ class dp_bilibili:
                 self.userdata_dir = get_path("userdata_dir")
             except Exception:
                 self.userdata_dir = Path("data/userdata")
+
+    def _request(self, method, url, **kwargs):
+        """带有延迟控制的请求包装"""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.request_interval:
+            sleep_time = self.request_interval - elapsed
+            time.sleep(sleep_time)
+        
+        response = self.session.request(method, url, **kwargs)
+        self.last_request_time = time.time()
+        return response
 
 
     def login_by_qrcode(self) -> bool:
@@ -88,7 +102,7 @@ class dp_bilibili:
         login_url_api = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
 
         try:
-            response = self.session.get(login_url_api)
+            response = self._request("GET", login_url_api)
             response.raise_for_status()
             data = response.json()['data']
             qrcode_key = data['qrcode_key']
@@ -111,7 +125,7 @@ class dp_bilibili:
             while True:
                 time.sleep(3)  # 等待一段时间后再轮询
                 params = {'qrcode_key': qrcode_key}
-                poll_response = self.session.get(poll_api, params=self.sign_params(params)) # 此处将自动使用 session 的 headers
+                poll_response = self._request("GET", poll_api, params=self.sign_params(params)) # 此处将自动使用 session 的 headers
                 poll_response.raise_for_status()
                 poll_data = poll_response.json()['data']
                 
@@ -161,7 +175,7 @@ class dp_bilibili:
         """
         nav_api = "https://api.bilibili.com/x/web-interface/nav"
         try:
-            response = self.session.get(nav_api)
+            response = self._request("GET", nav_api)
             response.raise_for_status()
             data = response.json().get('data', {})
             if data.get('isLogin'):
@@ -190,7 +204,7 @@ class dp_bilibili:
         
         for attempt in range(self.retry_max):
             try:
-                response = self.session.get(url)
+                response = self._request("GET", url)
                 response.raise_for_status()
                 data = response.json()
                 if data['code'] == 0:
@@ -224,7 +238,7 @@ class dp_bilibili:
 
         for attempt in range(self.retry_max):
             try:
-                response = self.session.get(url, timeout=10)
+                response = self._request("GET", url, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 img_url = data["data"]["wbi_img"]["img_url"]
@@ -323,7 +337,8 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # 发送API请求
-                response = self.session.get(
+                response = self._request(
+                    "GET",
                     "https://api.bilibili.com/x/space/wbi/arc/search",
                     params=self.sign_params(params),
                     headers=headers,
@@ -382,7 +397,7 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # session中已包含User-Agent
-                response = self.session.get(api_url, headers=headers, params=self.sign_params(params), timeout=10)
+                response = self._request("GET", api_url, headers=headers, params=self.sign_params(params), timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -425,7 +440,7 @@ class dp_bilibili:
 
         for attempt in range(self.retry_max):
             try:
-                response = self.session.get(api_url, params=params, headers=headers, timeout=10)
+                response = self._request("GET", api_url, params=params, headers=headers, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -465,7 +480,7 @@ class dp_bilibili:
         for attempt in range(self.retry_max):
             try:
                 # session中已包含User-Agent
-                response = self.session.get(api_url, params=self.sign_params(params), headers=headers, timeout=10)
+                response = self._request("GET", api_url, params=self.sign_params(params), headers=headers, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 if data.get('code') == 0:
@@ -506,127 +521,74 @@ class dp_bilibili:
                 
         return {} # 所有重试都失败后
     
-    def get_audio_download_url(self, bvid, cid):
-        """
-        获取视频的音频下载链接。
-
-        会优先选择码率为 132kbps (ID 30280), 192kbps (ID 30232), 64kbps (ID 30216) 的音轨。
-
-        Args:
-            bvid (str): 视频的BVID。
-            cid (int): 视频的CID。
-
-        Returns:
-            str: 音频的下载 URL。失败时返回空字符串。
-        """
-        api_url = "https://api.bilibili.com/x/player/wbi/playurl"
-        params = {
-            'fnval': 16,  # 16表示dash格式的视频
-            "bvid": bvid,
-            "cid": cid
-        }
-        
-        for attempt in range(self.retry_max):
-            try:
-                # session中已包含User-Agent
-                response = self.session.get(api_url, params=self.sign_params(params), timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                if data.get('code') == 0:
-                    # 成功获取，返回数据
-                    data_json = data.get("data", {})
-                    audio_json_list = data_json.get("dash", {}).get("audio", [])
-                    # 优先选择id为30280, 30232, 30216的音频
-                    target_ids = [30280, 30232, 30216]
-                    selected_audio = ""
-                    for target_id in target_ids:
-                        for audio in audio_json_list:# 优先选择id为30280, 30232, 30216的音频
-                            if audio.get("id") == target_id:
-                                selected_audio = audio.get('base_url', "")
-                                break
-                    return selected_audio
-                else:
-                    # API返回错误码，打印信息并重试
-                    self.logger.info(f"获取视频下载链接失败 (尝试 {attempt + 1}/{self.retry_max}): {data.get('message')}")
-            except Exception as e:
-                # 请求或解析过程发生异常，打印信息并重试
-                self.logger.info(f"请求视频下载链接时发生错误 (尝试 {attempt + 1}/{self.retry_max}): {e}")
-                
-            if attempt < self.retry_max - 1:
-                self.logger.info(f"将在 {self.retry_interval} 秒后重试...")
-                time.sleep(self.retry_interval)
-            else:
-                self.logger.info("已达到最大重试次数，获取视频下载链接失败。")
-                
         return "" # 所有重试都失败后
 
-def download_file_with_resume(session, url, file_path:Path):
-    """
-    使用 requests.Session 下载文件，并支持断点续传。
+    def download_file(self, url, file_path: Path):
+        """
+        使用带有延迟控制的请求下载文件，并支持断点续传。
 
-    Args:
-        session (requests.Session): 用于下载的会话对象。
-        url (str): 文件的下载 URL。
-        file_path (Path): 文件保存的本地路径。
+        Args:
+            url (str): 文件的下载 URL。
+            file_path (Path): 文件保存的本地路径。
 
-    Returns:
-        bool: 下载成功返回 True，否则返回 False。
-    """
-    headers = {"referer": 'https://www.bilibili.com'}
-    file_size = 0
-    max_attempts = 10
-    retry_interval = 5
-    for attempt in range(max_attempts):
-        try:
-            # 检查是否已存在部分下载的文件
-            if file_path.exists():
-                file_size = file_path.stat().st_size
-                headers['Range'] = f'bytes={file_size}-'
-            
-            response = session.get(url, headers=headers, stream=True, timeout=30)
-            
-            # 检查服务器是否支持断点续传
-            if response.status_code == 206:  # 部分内容
-                mode = 'ab'  # 追加模式
-            elif response.status_code == 200:  # 全部内容
-                mode = 'wb'  # 写入模式
-            else:
-                logger.warning(f"服务器返回异常状态码: {response.status_code}")
+        Returns:
+            bool: 下载成功返回 True，否则返回 False。
+        """
+        headers = {"referer": 'https://www.bilibili.com'}
+        file_size = 0
+        max_attempts = 10
+        retry_interval = 5
+        for attempt in range(max_attempts):
+            try:
+                # 检查是否已存在部分下载的文件
+                if file_path.exists():
+                    file_size = file_path.stat().st_size
+                    headers['Range'] = f'bytes={file_size}-'
+                
+                response = self._request("GET", url, headers=headers, stream=True, timeout=30)
+                
+                # 检查服务器是否支持断点续传
+                if response.status_code == 206:  # 部分内容
+                    mode = 'ab'  # 追加模式
+                elif response.status_code == 200:  # 全部内容
+                    mode = 'wb'  # 写入模式
+                else:
+                    self.logger.warning(f"服务器返回异常状态码: {response.status_code}")
+                    if attempt < max_attempts - 1:
+                        self.logger.info(f"{retry_interval}秒后重试...")
+                        time.sleep(retry_interval)
+                        continue
+                    else:
+                        self.logger.error("已达到最大重试次数，下载失败。")
+                
+                total_size = int(response.headers.get('content-length', 0))
+                with open(file_path, mode) as file, tqdm(
+                        desc="下载音频",
+                        total=total_size + file_size,
+                        unit='B',
+                        unit_scale=True,
+                        unit_divisor=1024,
+                        initial=file_size,  # 设置初始值
+                        position=0,
+                        leave=True
+                    ) as bar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            file.write(chunk)
+                            bar.update(len(chunk))
+                self.logger.info("下载完成!")
+                return True
+                
+            except Exception as e:
+                self.logger.warning(f"下载过程中出现错误: {e}")
+                time.sleep(retry_interval)
                 if attempt < max_attempts - 1:
-                    logger.info(f"{retry_interval}秒后重试...")
+                    self.logger.info(f"{retry_interval}秒后重试...")
                     time.sleep(retry_interval)
                     continue
                 else:
-                    logger.error("已达到最大重试次数，下载失败。")
-            
-            total_size = int(response.headers.get('content-length', 0))
-            with open(file_path, mode) as file, tqdm(
-                    desc="下载音频",
-                    total=total_size + file_size,
-                    unit='B',
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    initial=file_size,  # 设置初始值
-                    position=0,
-                    leave=True
-                ) as bar:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        file.write(chunk)
-                        bar.update(len(chunk))
-            logger.info("下载完成!")
-            return True
-            
-        except Exception as e:
-            logger.warning(f"下载过程中出现错误: {e}")
-            time.sleep(retry_interval)
-            if attempt < max_attempts - 1:
-                logger.info(f"{retry_interval}秒后重试...")
-                time.sleep(retry_interval)
-                continue
-            else:
-                logger.error("已达到最大重试次数，下载失败。")
-    return False
+                    self.logger.error("已达到最大重试次数，下载失败。")
+        return False
 
 
 if __name__ == "__main__":
@@ -670,6 +632,6 @@ if __name__ == "__main__":
                     dp_blbl.logger.info(f"视频 {title} 的下载链接: {dl_url}")
                     with open("download_url.json", "w") as f:
                         json.dump(dl_url, f, ensure_ascii=False, indent=4)
-                    download_file_with_resume(dp_blbl.session, dl_url, Path(f"audio.m4s"))
+                    dp_blbl.download_file(dl_url, Path(f"audio.m4s"))
         else:
              dp_blbl.logger.info("没有关注分组")
