@@ -16,6 +16,8 @@ from config import config
 
 from openai import OpenAI, OpenAIError, APIStatusError
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+import threading
 
 
 # ============== 常量定义 ==============
@@ -260,3 +262,149 @@ def get_all_ai_summaries(
         all_summaries.append(f"### {name}\n\n{summary}")
 
     return "\n\n---\n\n".join(all_summaries)
+
+
+def process_tasks_distributed(
+    tasks: list,
+    system_prompt: str = STOCK_ANALYST_SYSTEM_PROMPT,
+    max_workers: Optional[int] = None
+) -> list:
+    """
+    使用生产者-消费者模式，多 AI 账号并行处理不同的任务。
+    :param tasks: 任务列表，每个元素是一个待处理的 content 字符串
+    :param system_prompt: 系统提示词
+    :param max_workers: 最大工作线程数（默认使用所有可用 AI 账号）
+    :return: 结果列表，顺序与输入 tasks 一致
+    """
+    ai_configs = get_all_ai_configs()
+    if not ai_configs:
+        # 如果没有配置多 AI，则退化为单线程循环处理
+        results = []
+        for content in tasks:
+            results.append(analyze_stock_market(content))
+        return results
+
+    num_threads = min(len(ai_configs), max_workers) if max_workers else len(ai_configs)
+    task_queue = queue.Queue()
+    
+    # 将任务放入队列，保持序号以便最后排序
+    for i, content in enumerate(tasks):
+        task_queue.put((i, content))
+
+    results = [None] * len(tasks)
+    
+    def worker(ai_config):
+        while True:
+            try:
+                # 不阻塞，如果队列空了就退出
+                index, content = task_queue.get_nowait()
+            except queue.Empty:
+                break
+            
+            try:
+                # 调用 AI 处理
+                summary = analyze_stock_market(content, ai_config=ai_config)
+                # 标记 AI 名称
+                name = ai_config.get("openai_api_name", "AI")
+                results[index] = (name, summary)
+            except Exception as e:
+                results[index] = ("Error", str(e))
+            finally:
+                task_queue.task_done()
+
+    threads = []
+    # 每一个 AI 账号分配一个线程
+    for i in range(num_threads):
+        t = threading.Thread(target=worker, args=(ai_configs[i],))
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    return results
+
+
+class BatchTaskProcessor:
+    """
+    生产者-消费者模式处理器
+    支持边扫描边加入任务（Streaming mode）
+    """
+    def __init__(
+        self, 
+        system_prompt: str = STOCK_ANALYST_SYSTEM_PROMPT, 
+        max_workers: Optional[int] = None,
+        on_result_callback: Optional[callable] = None
+    ):
+        self.system_prompt = system_prompt
+        self.on_result_callback = on_result_callback
+        self.task_queue = queue.Queue()
+        self.ai_configs = get_all_ai_configs()
+        
+        if not self.ai_configs:
+            self.num_threads = 1
+        else:
+            self.num_threads = min(len(self.ai_configs), max_workers) if max_workers else len(self.ai_configs)
+            
+        self.threads = []
+        self.stop_event = threading.Event()
+        self._start_workers()
+
+    def _start_workers(self):
+        for i in range(self.num_threads):
+            cfg = self.ai_configs[i] if self.ai_configs else None
+            t = threading.Thread(target=self._worker_loop, args=(cfg,), daemon=True)
+            t.start()
+            self.threads.append(t)
+
+    def _worker_loop(self, ai_config):
+        ai_name = ai_config.get("openai_api_name", "AI") if ai_config else "DefaultAI"
+        
+        while not self.stop_event.is_set() or not self.task_queue.empty():
+            try:
+                # 阻塞获取任务，带超时以便检查 stop_event
+                task = self.task_queue.get(timeout=1)
+                task_id, content, extra_info = task
+            except queue.Empty:
+                continue
+            
+            try:
+                # 调用 AI
+                summary = analyze_stock_market(content, ai_config=ai_config)
+                
+                # 如果 AI 返回的内容包含错误信息，也视为失败
+                if is_ai_response_error(summary):
+                    raise Exception(f"AI Response contains error: {summary}")
+
+                if self.on_result_callback:
+                    self.on_result_callback(task_id, ai_name, summary, extra_info)
+                
+                self.task_queue.task_done()
+                
+            except Exception as e:
+                # 发生异常（可能是 API 错误或逻辑错误）
+                error_msg = str(e)
+                print(f"[⚠️ AI 退休] 账号 [{ai_name}] 发生错误，任务将回滚到队列。错误: {error_msg}")
+                
+                # 将任务重新放回队列，给其他 AI 处理
+                self.task_queue.put(task)
+                
+                # 既然这个 AI 出错，就让这个线程退出（退休）
+                # 以后这个账号就不再参与后续任务
+                # 注意：这里我们不调用 task_done()，因为任务被放回了
+                # 但是 Queue.join() 依赖于 task_done() 和 task_queue 的计数。
+                # put() 会增加 unfinished_tasks 计数，所以我们必须为刚才获取的任务调用一次 task_done()
+                # 否则 join() 将永远阻塞。
+                self.task_queue.task_done()
+                break
+
+    def add_task(self, task_id, content, extra_info=None):
+        """向队列添加任务"""
+        self.task_queue.put((task_id, content, extra_info))
+
+    def wait_and_stop(self):
+        """等待所有已添加任务处理完并停止线程"""
+        self.task_queue.join()
+        self.stop_event.set()
+        for t in self.threads:
+            t.join()

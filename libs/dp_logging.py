@@ -34,8 +34,14 @@ def setup_logger(name: str = 'my_app', log_dir: Path = Path("."), file_level: in
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # 创建一个 handler，用于写入日志文件
-    file_handler = logging.FileHandler(log_path, encoding='utf-8', mode='a')
+    # 使用 RotatingFileHandler 设置 1MB 的上限，不保留备份
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(
+        log_path, 
+        maxBytes=1 * 1024 * 1024, # 1MB
+        backupCount=0, 
+        encoding='utf-8'
+    )
     file_handler.setLevel(file_level)
     file_handler.setFormatter(formatter)
 

@@ -12,7 +12,8 @@ sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
 sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
 from dp_bilibili_api import dp_bilibili
 from dp_logging import setup_logger
-from ai_utils import get_all_ai_configs, analyze_stock_market, get_all_ai_summaries
+from ai_utils import get_all_ai_configs, analyze_stock_market, get_all_ai_summaries, process_tasks_distributed, BatchTaskProcessor
+from md_utils import extract_metadata_from_filename, build_markdown_content
 
 # 日志
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -44,141 +45,90 @@ def get_dir_in_config(key: str) -> Path:
 
 from config import config
 
-def process_single_file(text_filepath, filename_pattern, force):
-    filename = text_filepath.name
-    match = filename_pattern.match(filename)
-    if not match:
-        logger.info(f"  - [跳过] 文件名格式不匹配: {filename}")
-        return "ignored"
-
-    try:
-        logger.debug(f"开始处理文件{filename}")
-
-        # 从匹配结果中提取信息
-        timestamp_str, up_name, title, bvid = match.groups()
-        video_link = f"https://www.bilibili.com/video/{bvid}"
-
-        # 将文件名中的时间戳转换为标准格式
-        # 原始格式: 2023-04-01_01-38-05
-        # 目标格式: 2023-04-01 01:38:05
-        try:
-            date_part, time_part = timestamp_str.split('_', 1)
-            formatted_time = f"{date_part} {time_part.replace('-', ':')}"
-        except ValueError:
-            formatted_time = timestamp_str # 格式不符则保留原样
-
-        # 生成目录
-        target_dir = text_filepath.parent.parent / "markdown" / f"{formatted_time[0:10]}"
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        # 使用与 .text 文件相同的文件名（仅替换后缀）来创建 .md 文件
-        md_filepath = (target_dir / text_filepath.name).with_suffix('.md')
-
-        # 使用 pathlib.Path.exists() 判断 markdown 文件是否存在，如果存在就跳过
-        if not force and md_filepath.exists():
-            logger.debug(f"  - [跳过] Markdown 文件已存在: '{md_filepath.name}'")
-            return "skipped"
-
-        # 使用 pathlib 的便捷方法读取文本
-        transcript = text_filepath.read_text(encoding='utf-8')
-
-        # AI总结 - 使用所有可用的 AI 配置进行并行处理
-        logger.debug(f"正在调用 AI 总结 (包含所有可用 API)...")
-        ai_markdown = get_all_ai_summaries(transcript)
-
-        # 构建 Markdown 内容
-        md_content = f"""# {title}
-
-- **UP主**: {up_name}
-- **BVID**: {bvid}
-- **视频链接**: <{video_link}>
-- **文件时间**: {formatted_time}
-
----
-
-## tags
-
-
-
-## 总结
-
-
-
-## AI总结
-
-{ai_markdown}
-
-## 视频文稿
-
-{transcript}
-"""
-        # 使用 pathlib 的便捷方法写入文本
-        md_filepath.write_text(md_content, encoding='utf-8')
-        
-        ai_names = [cfg.get("openai_api_name", "Unknown") for cfg in get_all_ai_configs()]
-        ai_names_str = ", ".join(ai_names)
-        logger.info(f"  - [成功] (AI: {ai_names_str}) 已为 '{filename}' 创建 Markdown 文件: '{md_filepath.name}'")
-        return "processed"
-
-    except Exception as e:
-        logger.info(f"  - [失败] 处理文件 '{filename}' 时出错: {e}")
-        return "error"
 
 def create_markdown_files_from_text(force: bool = False):
     """
     遍历指定目录，为每个 .text 文件创建一个对应的 .md 文件。
-    如果 .md 文件已存在，则跳过。
-    
-    文件名格式应为: `[时间戳][UP主名][视频标题][BVID].text`
-    例如: `[2023-04-01_01-38-05][小木吱吱][为什么离开大厂去创业][BV1WT411s7z5].text`
-
-    生成的 .md 文件将与对应的 .text 文件同名，仅后缀不同。
-
-    Args:
-        source_dir (str): 包含 .text 文件的源目录。
+    采用流式生产者-消费者模式：边扫描边加入队列进行处理。
     """
     source_path = get_dir_in_config("save_text_dir")
-    logger.info(f"\n--- 开始处理 '{source_path}' 目录下的文稿文件 ---")
+    logger.info(f"\n--- 开始处理 '{source_path}' 目录下的文稿文件 (流式并行模式) ---")
 
     if not source_path.is_dir():
         logger.error(f"错误: 目录 '{source_path}' 不存在或不是一个有效的目录。")
         return
 
-    # 正则表达式用于匹配 [内容1][内容2][内容3][内容4].text 的格式
-    # 它会捕获每个方括号内的内容
     filename_pattern = re.compile(r'\[(.*?)\]\[(.*?)\]\[(.*?)\]\[(.*?)\]\.text')
-
-    processed_count = 0
-    skipped_count = 0
     
-    # 获取所有的 .text 文件
     text_files = list(source_path.glob("*.text"))
     if not text_files:
         logger.info("没有发现需要处理的 .text 文件。")
         return
 
-    # 并行处理视频文件
-    # 设置合理的线程数，这里设置为 AI 配置的数量，因为主要的瓶颈在 AI 请求
-    ai_configs = get_all_ai_configs()
-    max_workers = len(ai_configs) if ai_configs else 4
-    
-    logger.info(f"正在启动并行处理，线程数: {max_workers}...")
-    
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {executor.submit(process_single_file, fp, filename_pattern, force): fp for fp in text_files}
+    # 初始化统计数据
+    processed_count = 0
+    error_count = 0
+    skipped_count = 0
+    added_to_queue_count = 0
+
+    # 定义处理结果的回调函数
+    def on_ai_result(task_id, ai_name, summary, meta):
+        nonlocal processed_count, error_count
+        md_filepath = meta["md_filepath"]
         
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                result = future.result()
-                if result == "processed":
-                    processed_count += 1
-                elif result == "skipped":
-                    skipped_count += 1
-            except Exception as e:
-                logger.error(f"处理文件 {file_path.name} 时发生预期外错误: {e}")
+        if ai_name == "Error":
+            logger.error(f"  - [失败] {meta['filename']}: {summary}")
+            error_count += 1
+            return
+
+        md_content = build_markdown_content(meta, meta["transcript"], summary, ai_name)
+        try:
+            md_filepath.parent.mkdir(parents=True, exist_ok=True)
+            md_filepath.write_text(md_content, encoding='utf-8')
+            logger.info(f"  - [成功] (AI: {ai_name}) 已创建 Markdown: '{md_filepath.name}'")
+            processed_count += 1
+        except Exception as e:
+            logger.error(f"  - [写入失败] {meta['filename']}: {e}")
+            error_count += 1
+
+    # 启动任务处理器
+    processor = BatchTaskProcessor(on_result_callback=on_ai_result)
+
+    logger.info("正在扫描文件并加入任务队列...")
+
+    for text_filepath in text_files:
+        meta = extract_metadata_from_filename(text_filepath.name)
+        if not meta:
+            logger.debug(f"  - [跳过] 文件名格式不匹配: {text_filepath.name}")
+            continue
+            
+        meta["text_filepath"] = text_filepath
+        target_dir = text_filepath.parent.parent / "markdown" / meta["date_folder"]
+        md_filepath = (target_dir / text_filepath.name).with_suffix('.md')
+        
+        if not force and md_filepath.exists():
+            skipped_count += 1
+            continue
+            
+        try:
+            transcript = text_filepath.read_text(encoding='utf-8')
+            meta["transcript"] = transcript
+            meta["md_filepath"] = md_filepath
+            # 加入队列，立即开始处理
+            processor.add_task(text_filepath.name, transcript, extra_info=meta)
+            added_to_queue_count += 1
+        except Exception as e:
+            logger.error(f"读取或添加文件 {text_filepath.name} 失败: {e}")
+
+    if added_to_queue_count == 0:
+        logger.info(f"没有发现需要处理的新文件。跳过了 {skipped_count} 个已存在的文件。")
+        # 记得也要停止处理器，虽然没给它发任务
+        processor.wait_and_stop()
+    else:
+        logger.info(f"已将 {added_to_queue_count} 个任务加入队列。等待处理完成...")
+        processor.wait_and_stop()
     
-    logger.info(f"\n处理完成，共创建了 {processed_count} 个 Markdown 文件，跳过了 {skipped_count} 个已存在的文件。")
+    logger.info(f"\n处理完成: 成功 {processed_count}, 失败 {error_count}, 跳过 {skipped_count}.")
 
 if __name__ == "__main__":
     create_markdown_files_from_text()
