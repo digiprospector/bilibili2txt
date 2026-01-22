@@ -32,52 +32,58 @@ NEW_VIDEO_LIST_DIR = get_path("new_video_list_dir")
 SAVE_NEW_VIDEO_LIST_DIR = get_path("save_new_video_list_dir")
 
 
-def in_queue():
-    parser = argparse.ArgumentParser(
-        description="将一个包含B站视频信息的txt文件复制到queue的to_stt目录中。然后提交queue仓库",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
-    parser.add_argument(
-        "input_file", nargs='?',
-        help="包含B站视频链接的txt文件路径 (可选，如果未指定，则使用目录中的最后一个文件)."
-    )
+def get_input_file(args_input_file):
+    """确定输入文件路径"""
+    if args_input_file:
+        return Path(args_input_file)
     
-    target_dir = QUEUE_DIR / "to_stt"
+    # 获取目录中最新的 .txt 文件
+    files = sorted(NEW_VIDEO_LIST_DIR.glob("*.txt"))
+    return files[-1] if files else None
 
-    # 如果没有提供输入文件，使用当前目录中的最后一个文件
-    args = parser.parse_args()
-    if args.input_file:
-        input_path = Path(args.input_file)
-    else:
-        # 获取当前目录中的所有文件
-        files = sorted(NEW_VIDEO_LIST_DIR.glob("*"))
-        input_path = files[-1] if files else None
-    
-    if not input_path:
-        logger.info(f"没有指定输入文件，并且目录 {NEW_VIDEO_LIST_DIR} 中也没有找到可用的文件。")
-        return
-
+def process_file(input_path, target_dir):
+    """执行单个文件的同步和移动"""
     while True:
         try:
             reset_repo(QUEUE_DIR)
             
+            # 计算行数并复制
+            line_count = sum(1 for _ in input_path.open('r', encoding='utf-8'))
             shutil.copy(input_path, target_dir)
-            commit_msg = f"新增文件{input_path.name}, 共 {sum(1 for _ in input_path.open('r', encoding='utf-8'))} 行"
             
-            logger.info(f"已将文件 {input_path} 复制到 {target_dir}")
-            logger.info(f"提交信息: {commit_msg}")
+            commit_msg = f"新增文件 {input_path.name}, 共 {line_count} 行"
+            logger.info(f"已将文件 {input_path.name} 复制到 {target_dir}")
             
-            if not push_changes(QUEUE_DIR, commit_msg):
-                logger.error("提交失败, 等待10秒重试")
+            if push_changes(QUEUE_DIR, commit_msg):
+                # 移动到备份目录
+                shutil.move(input_path, SAVE_NEW_VIDEO_LIST_DIR / input_path.name)
+                logger.info(f"成功推送并将文件移动到 {SAVE_NEW_VIDEO_LIST_DIR}")
+                return True
+            else:
+                logger.error("提交失败, 10秒后重试...")
                 time.sleep(10)
-                continue
-            shutil.move(input_path, SAVE_NEW_VIDEO_LIST_DIR / input_path.name)
-            logger.info(f"已将文件移动到 {SAVE_NEW_VIDEO_LIST_DIR / input_path.name}")
-            break
         except Exception as e:
-            logger.error(f"发生错误: {e}")
+            logger.error(f"处理文件 {input_path.name} 时发生错误: {e}")
             time.sleep(10)
             logger.info("10秒后重试...")
 
+def in_queue(input_path: Path):
+    target_dir = QUEUE_DIR / "to_stt"
+    process_file(input_path, target_dir)
+
 if __name__ == "__main__":
-    in_queue()
+    parser = argparse.ArgumentParser(
+        description="将B站视频 information 文件同步到 queue 仓库。",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "-i", "--input", dest="input_file",
+        help="包含视频信息的 txt 文件路径 (可选，默认为目录中最新的文件)."
+    )
+    args = parser.parse_args()
+    
+    input_path = get_input_file(args.input_file)
+    if not input_path:
+        logger.info(f"没有指定输入文件，且在 {NEW_VIDEO_LIST_DIR} 中未找到可用文件。")
+    else:
+        in_queue(input_path)
