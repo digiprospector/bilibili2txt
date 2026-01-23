@@ -66,15 +66,37 @@ def get_ai_config_by_name(name: str) -> Optional[Dict[str, Any]]:
 
 
 def get_selected_ai_config() -> Dict[str, Any]:
-    """根据 config['select_open_ai'] 获取当前选中的 AI 配置"""
+    """
+    根据 config['select_open_ai'] 获取当前选中的 AI 配置。
+    如果选中的 AI 已被标记为失败，则寻找第一个可用的 AI。
+    """
     select_name = config.get("select_open_ai")
     result = get_ai_config_by_name(select_name)
+    
+    # 如果选中的 AI 不存在或已失败
+    if not result or result.get("is_failed"):
+        # 寻找第一个未失败的 AI
+        all_working = get_all_ai_configs()
+        if all_working:
+            return all_working[0]
+            
     return result if result else {}
 
 
-def get_all_ai_configs() -> list:
+def get_all_ai_configs(include_failed=False) -> list:
     """获取所有 AI 配置"""
-    return config.get("open_ai_list", [])
+    configs = config.get("open_ai_list", [])
+    if include_failed:
+        return configs
+    return [c for c in configs if not c.get("is_failed")]
+
+
+def mark_ai_as_failed(name: str):
+    """标记某个 AI 为失败"""
+    for item in config.get("open_ai_list", []):
+        if item.get("openai_api_name") == name:
+            item["is_failed"] = True
+            break
 
 
 # ============== 客户端创建 ==============
@@ -197,6 +219,34 @@ def test_ai_availability(ai_config: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"[{name}] ✗ 不可用 - OpenAI错误: {str(e)}"
     except Exception as e:
         return False, f"[{name}] ✗ 不可用 - 错误: {str(e)}"
+
+
+def test_all_ai_apis(verbose=True) -> bool:
+    """测试所有 AI API 是否可用, 只要有一个可用就返回 True, 失败的会被标记为 is_failed"""
+    all_configs = get_all_ai_configs(include_failed=True)
+    any_success = False
+    
+    if verbose:
+        print(f"开始测试 {len(all_configs)} 个 AI 配置...")
+
+    for ai_config in all_configs:
+        name = ai_config.get("openai_api_name", "unknown")
+        if verbose:
+            print(f"正在测试 AI: {name}...", end=" ", flush=True)
+        
+        success, msg = test_ai_availability(ai_config)
+        
+        if success:
+            if verbose:
+                print("✓ 可用")
+            any_success = True
+            ai_config["is_failed"] = False
+        else:
+            if verbose:
+                print(f"✗ 不可用 ({msg})")
+            mark_ai_as_failed(name)
+            
+    return any_success
 
 
 # ============== 业务功能 ==============
