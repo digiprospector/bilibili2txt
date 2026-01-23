@@ -139,8 +139,12 @@ def check_webdav_file_exists(url: str, username: str, password: str, logger, web
         logger.error(f"检查 WebDAV 文件是否存在时发生网络错误 ({url}): {e}")
         return False
 
-def list_webdav_files(url, username, password, logger, webdav_proxy=None):
-    "获取WebDAV服务器上指定路径下的文件列表"
+def list_webdav_files(url, username, password, logger, webdav_proxy=None, return_full_url=False):
+    """获取WebDAV服务器上指定路径下的文件列表
+    
+    Args:
+        return_full_url: 如果为 True，返回完整 URL 列表；否则返回文件名集合。
+    """
     logger.info(f"正在从 WebDAV 获取文件列表: {url}")
     proxies = {'http': webdav_proxy, 'https': webdav_proxy} if webdav_proxy else None
     try:
@@ -156,14 +160,27 @@ def list_webdav_files(url, username, password, logger, webdav_proxy=None):
         
         # 解析XML响应
         root = ElementTree.fromstring(response.content)
-        # 命名空间通常是 {DAV:}
         ns = {'d': 'DAV:'}
-        filenames = [Path(href.text).name for href in root.findall('.//d:href', ns)]
-        logger.info(f"从 WebDAV 成功获取 {len(filenames)} 个文件。 সন")
-        return set(filenames)
+        
+        base_url = url.rstrip('/')
+        results = []
+        
+        for href in root.findall('.//d:href', ns):
+            href_text = href.text
+            # 跳过目录自身 (以 / 结尾)
+            if href_text.endswith('/'):
+                continue
+            filename = Path(href_text).name
+            if return_full_url:
+                results.append(f"{base_url}/{filename}")
+            else:
+                results.append(filename)
+        
+        logger.info(f"从 WebDAV 成功获取 {len(results)} 个文件。")
+        return results if return_full_url else set(results)
     except requests.exceptions.RequestException as e:
         logger.error(f"从 WebDAV 获取文件列表失败: {e}")
-        return None
+        return [] if return_full_url else None
     except Exception as e:
         logger.error(f"解析 WebDAV 列表失败: {e}")
-        return None
+        return [] if return_full_url else None

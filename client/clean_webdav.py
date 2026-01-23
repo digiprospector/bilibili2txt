@@ -1,71 +1,17 @@
-import sys
-from pathlib import Path
-import requests
-import xml.etree.ElementTree as ET
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 from concurrent.futures import ThreadPoolExecutor
 
-# Add project directories to sys.path
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
+from bootstrap import config, get_standard_logger
+from webdav import list_webdav_files, delete_from_webdav_requests
 
-from dp_logging import setup_logger
-from config import config
-from webdav import delete_from_webdav_requests
-
-# Setup logger
-logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
-
-def list_webdav_files(webdav_url, username, password, webdav_proxy=None):
-    """
-    Lists all files in the given WebDAV directory using PROPFIND.
-    Returns a list of full URLs for each file.
-    """
-    logger.info(f"Listing files from WebDAV server: {webdav_url}")
-    proxies = None
-    if webdav_proxy:
-        proxies = {
-            "http": webdav_proxy,
-            "https": webdav_proxy,
-        }
-    try:
-        response = requests.request(
-            "PROPFIND",
-            webdav_url,
-            auth=(username, password),
-            headers={"Depth": "1"},
-            timeout=30,
-            proxies=proxies
-        )
-        response.raise_for_status()
-
-        # Namespace for DAV XML elements
-        ns = {'d': 'DAV:'}
-        root = ET.fromstring(response.content)
-        
-        base_url = webdav_url.rstrip('/')
-        files = []
-        for response_elem in root.findall('d:response', ns):
-            href = response_elem.find('d:href', ns).text
-            # Exclude the directory itself (href ends with /)
-            if not href.endswith('/'):
-                # Construct full URL
-                file_url = f"{base_url}/{href.split('/')[-1]}"
-                files.append(file_url)
-        
-        logger.info(f"Found {len(files)} files on WebDAV server.")
-        return files
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error listing files from WebDAV: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"An unexpected error occurred while listing files: {e}")
-        return []
+# 日志
+logger = get_standard_logger(__file__)
 
 def clean_webdav():
     """
-    Deletes all files from the WebDAV server specified in the config.
+    删除 WebDAV 服务器上的所有文件。
     """
     webdav_url = config.get('webdav_url')
     username = config.get('webdav_username')
@@ -73,16 +19,31 @@ def clean_webdav():
     webdav_proxy = config.get('webdav_proxy')
 
     if not all([webdav_url, username, password]):
-        logger.error("WebDAV configuration (webdav_url, webdav_username, webdav_password) is missing in config.py.")
+        logger.error("WebDAV 配置缺失 (webdav_url, webdav_username, webdav_password)。")
         return
 
-    files_to_delete = list_webdav_files(webdav_url, username, password, webdav_proxy)
+    # 获取所有文件的完整 URL
+    files_to_delete = list_webdav_files(webdav_url, username, password, logger, webdav_proxy, return_full_url=True)
+    
+    if not files_to_delete:
+        logger.info("WebDAV 上没有文件需要删除。")
+        return
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    logger.info(f"准备删除 {len(files_to_delete)} 个文件...")
+    
+    with ThreadPoolExecutor(max_workers=5) as executor:
         for file_url in files_to_delete:
-            logger.info(f"Deleting file: {file_url}")
-            executor.submit(delete_from_webdav_requests, url=file_url, username=username, password=password, logger=logger, webdav_proxy=webdav_proxy)
+            logger.info(f"正在删除: {file_url}")
+            executor.submit(
+                delete_from_webdav_requests, 
+                url=file_url, 
+                username=username, 
+                password=password, 
+                logger=logger, 
+                webdav_proxy=webdav_proxy
+            )
+    
+    logger.info("WebDAV 清理完成。")
 
 if __name__ == "__main__":
     clean_webdav()
-    logger.info("WebDAV cleanup process finished.")
