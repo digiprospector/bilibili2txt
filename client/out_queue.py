@@ -6,15 +6,14 @@ import sys
 import shutil
 import time
 
-from bootstrap import config, get_path, get_standard_logger
+from bootstrap import config, get_standard_logger, QUEUE_DIR, SAVE_TEXT_DIR
 from git_utils import git_repo_transaction, set_logger as git_utils_set_logger
 
 # 日志
 logger = get_standard_logger(__file__)
 git_utils_set_logger(logger)
 
-QUEUE_DIR = get_path("queue_dir")
-DST_DIR = get_path("save_text_dir")
+DST_DIR = SAVE_TEXT_DIR
 
 def out_queue(force: bool = False):
     """

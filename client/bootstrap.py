@@ -23,4 +23,17 @@ def get_standard_logger(filename):
     """为脚本创建一个标准的日志对象"""
     return setup_logger(Path(filename).stem, log_dir=ROOT_DIR / "logs")
 
-__all__ = ['config', 'setup_logger', 'get_path', 'get_standard_logger', 'ROOT_DIR']
+# ============== 常用目录常量 ==============
+# 预计算常用目录，方便各脚本直接导入
+QUEUE_DIR = get_path("queue_dir")
+DATA_DIR = get_path("data_dir")
+TEMP_DIR = get_path("temp_dir")
+SAVE_TEXT_DIR = get_path("save_text_dir")
+NEW_VIDEO_LIST_DIR = get_path("new_video_list_dir")
+SAVE_NEW_VIDEO_LIST_DIR = get_path("save_new_video_list_dir")
+
+__all__ = [
+    'config', 'setup_logger', 'get_path', 'get_standard_logger', 'ROOT_DIR',
+    'QUEUE_DIR', 'DATA_DIR', 'TEMP_DIR', 'SAVE_TEXT_DIR', 
+    'NEW_VIDEO_LIST_DIR', 'SAVE_NEW_VIDEO_LIST_DIR'
+]

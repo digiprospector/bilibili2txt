@@ -4,7 +4,7 @@
 from pathlib import Path
 import re
 
-from bootstrap import get_path, get_standard_logger
+from bootstrap import get_standard_logger, SAVE_TEXT_DIR
 from dp_bilibili_api import dp_bilibili
 from ai_utils import BatchTaskProcessor
 from md_utils import extract_metadata_from_filename, build_markdown_content
@@ -18,7 +18,7 @@ def create_markdown_files_from_text(force: bool = False):
     遍历指定目录，为每个 .text 文件创建一个对应的 .md 文件。
     采用流式生产者-消费者模式：边扫描边加入队列进行处理。
     """
-    source_path = get_path("save_text_dir")
+    source_path = SAVE_TEXT_DIR
     logger.info(f"\n--- 开始处理 '{source_path}' 目录下的文稿文件 (流式并行模式) ---")
 
     if not source_path.is_dir():

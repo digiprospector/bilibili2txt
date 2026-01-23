@@ -7,7 +7,7 @@ import sys
 import shutil
 import argparse
 
-from bootstrap import get_path, get_standard_logger
+from bootstrap import get_standard_logger, QUEUE_DIR, NEW_VIDEO_LIST_DIR, SAVE_NEW_VIDEO_LIST_DIR
 
 # Import git utils (libs added by bootstrap)
 from git_utils import git_repo_transaction, set_logger as git_utils_set_logger
@@ -15,10 +15,6 @@ from git_utils import git_repo_transaction, set_logger as git_utils_set_logger
 # 日志
 logger = get_standard_logger(__file__)
 git_utils_set_logger(logger)
-
-QUEUE_DIR = get_path("queue_dir")
-NEW_VIDEO_LIST_DIR = get_path("new_video_list_dir")
-SAVE_NEW_VIDEO_LIST_DIR = get_path("save_new_video_list_dir")
 
 
 def get_input_file(args_input_file):

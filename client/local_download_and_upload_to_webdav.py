@@ -8,7 +8,7 @@ import shutil
 import json
 import yt_dlp
 
-from bootstrap import config, get_path, get_standard_logger
+from bootstrap import config, get_standard_logger, QUEUE_DIR, TEMP_DIR
 
 # Import git utils and webdav (libs added by bootstrap)
 from git_utils import set_logger as git_utils_set_logger
@@ -17,9 +17,6 @@ from webdav import upload_to_webdav_requests, list_webdav_files
 # Setup logger
 logger = get_standard_logger(__file__)
 git_utils_set_logger(logger)
-
-QUEUE_DIR = get_path("queue_dir")
-TEMP_DIR = get_path("temp_dir")
 
 def check_webdav_exists(bvid, webdav_files):
     """检查 WebDAV 上是否已存在该视频的音频文件"""
