@@ -36,7 +36,7 @@ def check_webdav_exists(bvid, webdav_files):
 
 def download_audio(bvid, video_url):
     """下载视频音频"""
-    output_audio_template = TEMP_DIR / f"{bvid}_%(playlist_index)s.mp3"
+    output_audio_template = TEMP_DIR / f"{bvid}_%(playlist_index)s"
     
     ydl_opts = {
         'format': 'ba/bestaudio',

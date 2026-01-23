@@ -227,23 +227,29 @@ def test_all_ai_apis(verbose=True) -> bool:
     any_success = False
     
     if verbose:
-        print(f"开始测试 {len(all_configs)} 个 AI 配置...")
+        print(f"开始并行测试 {len(all_configs)} 个 AI 配置...")
 
-    for ai_config in all_configs:
+    def _test_single(ai_config):
         name = ai_config.get("openai_api_name", "unknown")
-        if verbose:
-            print(f"正在测试 AI: {name}...", end=" ", flush=True)
-        
         success, msg = test_ai_availability(ai_config)
-        
+        return ai_config, name, success, msg
+
+    results = []
+    with ThreadPoolExecutor(max_workers=len(all_configs)) as executor:
+        futures = [executor.submit(_test_single, cfg) for cfg in all_configs]
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    # 按配置顺序处理结果并输出
+    for ai_config, name, success, msg in results:
         if success:
             if verbose:
-                print("✓ 可用")
+                print(f"  {name}: ✓ 可用")
             any_success = True
             ai_config["is_failed"] = False
         else:
             if verbose:
-                print(f"✗ 不可用 ({msg})")
+                print(f"  {name}: ✗ 不可用 ({msg})")
             mark_ai_as_failed(name)
             
     return any_success
