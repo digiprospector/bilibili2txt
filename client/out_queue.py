@@ -6,78 +6,51 @@ import sys
 import shutil
 import time
 
-
-SCRIPT_DIR = Path(__file__).parent
-sys.path.append(str((SCRIPT_DIR.parent / "libs").absolute()))
-sys.path.append(str((SCRIPT_DIR.parent / "common").absolute()))
-from dp_logging import setup_logger
-from git_utils import reset_repo, push_changes, set_logger as git_utils_set_logger
+from bootstrap import config, get_path, get_standard_logger
+from git_utils import git_repo_transaction, set_logger as git_utils_set_logger
 
 # 日志
-logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
+logger = get_standard_logger(__file__)
 git_utils_set_logger(logger)
 
-# 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
-
-def create_config_file():
-    if not CONFIG_FILE.exists():
-        logger.info(f"未找到配置文件 {CONFIG_FILE}，将从 {CONFIG_SAMPLE_FILE} 复制。")
-        try:
-            
-            shutil.copy(CONFIG_SAMPLE_FILE, CONFIG_FILE)
-        except Exception as e:
-            logger.error(f"从 {CONFIG_SAMPLE_FILE} 复制配置文件失败: {e}")
-            exit()
-create_config_file()
-
-def get_dir_in_config(key: str) -> Path:
-    dir_path_str = config[key]
-    if dir_path_str.startswith("/"):
-        dir_path = Path(dir_path_str)
-    else:
-        dir_path = SCRIPT_DIR.parent / dir_path_str
-    logger.debug(f"config[{key}] 的路径: {dir_path}")
-    dir_path.mkdir(parents=True, exist_ok=True)
-    return dir_path
-
-from config import config
-QUEUE_DIR = get_dir_in_config("queue_dir")
-DST_DIR = get_dir_in_config("save_text_dir")
+QUEUE_DIR = get_path("queue_dir")
+DST_DIR = get_path("save_text_dir")
 
 def out_queue(force: bool = False):
-    while True:
-        try:
-            reset_repo(QUEUE_DIR)
-            SRC_DIR = QUEUE_DIR / "from_stt"
+    """
+    将文件从 queue/from_stt 移动到本地 save_text_dir。
+    """
+    def action():
+        src_dir = QUEUE_DIR / "from_stt"
+        if not src_dir.exists():
+            logger.info(f"源目录 {src_dir} 不存在。")
+            return None
             
-            count = 0
-            # 复制非隐藏文件到 DST_DIR
-            for file in SRC_DIR.iterdir():
-                if file.is_file() and not file.name.startswith('.'):
-                    try:
-                        if force:
-                            (DST_DIR / file.name).unlink()
+        count = 0
+        # 复制非隐藏文件到 DST_DIR
+        for file_path in src_dir.iterdir():
+            if file_path.is_file() and not file_path.name.startswith('.'):
+                try:
+                    target_path = DST_DIR / file_path.name
+                    if force and target_path.exists():
+                        logger.info(f"强制覆盖: 正在删除现有文件 {target_path}")
+                        target_path.unlink()
 
-                        shutil.move(file, DST_DIR)
-                        count += 1
-                        logger.debug(f"已将文件 {file} 移动到 {DST_DIR}")
-                    except Exception as e:
-                        logger.error(f"移动文件 {file} 到 {DST_DIR} 失败: {e}")
-                        
-            commit_msg = f"已将{count}个文件复制到 {DST_DIR}"
-            logger.info(f"提交信息: {commit_msg}")
-            
-            if not push_changes(QUEUE_DIR, commit_msg):
-                logger.error("提交失败, 等待10秒重试")
-                time.sleep(10)
-                continue
-            break
-        except Exception as e:
-            logger.error(f"发生错误: {e}")
-            logger.info("10秒后重试...")
-            time.sleep(10)
+                    shutil.move(str(file_path), str(DST_DIR))
+                    count += 1
+                    logger.debug(f"已将文件 {file_path.name} 移动到 {DST_DIR}")
+                except Exception as e:
+                    logger.error(f"移动文件 {file_path.name} 到 {DST_DIR} 失败: {e}")
+                    
+        if count > 0:
+            commit_msg = f"已将 {count} 个文件从 from_stt 移动到本地存储"
+            logger.info(commit_msg)
+            return commit_msg
+        else:
+            logger.info("from_stt 目录中没有需要移动的文件。")
+            return None
+
+    git_repo_transaction(QUEUE_DIR, action)
 
 if __name__ == "__main__":
     out_queue()

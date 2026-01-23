@@ -82,54 +82,35 @@ def push_changes(repo_path: Path, commit_message: str):
         logger.error(f"发生未知错误: {e}")
         raise
     
-def reset_action_and_sync(repo_path: Path, action):
+def git_repo_transaction(repo_path: Path, action_func, success_func=None, retry_interval: int = 10):
+    """
+    统一的 Git 仓库事务处理：重置 -> 执行操作 -> 提交推送
+    :param repo_path: 仓库路径
+    :param action_func: 核心操作函数。返回 commit_message (str) 表示需要推送；返回 None 表示无操作。
+    :param success_func: 推送成功后的回调函数。接收 action_func 的返回值。
+    :param retry_interval: 失败重试间隔（秒）
+    """
     while True:
         try:
-            # Initialize GitPython repository object
-            repo = git.Repo(repo_path)
-            origin = repo.remotes.origin
-
-            # 1. Sync git repo
-            logger.info("正在重置并同步仓库...")
-            branch_name = repo.active_branch.name
-
-            repo.git.fetch('--all', prune=True)
-            repo.git.reset('--hard', f'origin/{branch_name}')
-            repo.git.clean('-fd')
-            origin.pull()
-            logger.info("仓库已成功重置并与远程同步。")
+            # 1. 重置并拉取最新代码
+            reset_repo(repo_path)
             
-
-            # 2. Move files from partitions to ../queue/to_stt
-            commit_message = action()
-            if commit_message == "无文件可添加":
-                logger.info("没有文件需要添加，跳过提交步骤。")
-                break
-
-            # 3. Commit changes
-            logger.info("正在添加、提交和推送更改...")
-            obj_to_add = [item.a_path for item in repo.index.diff(None)] + repo.untracked_files
-            repo.index.add(obj_to_add)
-            repo.index.commit(commit_message)
-            # 4. Push changes
-            logger.info("正在推送更改...")
-            push_infos = origin.push()
-
-            push_failed = any(info.flags & (git.PushInfo.ERROR | git.PushInfo.REJECTED) for info in push_infos)
-
-            if not push_failed:
-                logger.info("文件复制并推送成功。")
-                break  # Success, exit the while loop
+            # 2. 执行业务逻辑
+            commit_msg = action_func()
+            if not commit_msg:
+                # logger.info("无需推送，结束事务。")
+                return True
+            
+            # 3. 提交并推送
+            if push_changes(repo_path, commit_msg):
+                # 4. 成功后的回调
+                if success_func:
+                    success_func(commit_msg)
+                return True
             else:
-                for info in push_infos:
-                    if info.flags & (git.PushInfo.ERROR | git.PushInfo.REJECTED):
-                        logger.error(f"推送失败详情: {info.summary}")
-                logger.error("推送失败，将在5秒后重试...")
-                time.sleep(5)
-
-        except GitCommandError as e:
-            logger.error(f"发生Git操作错误: {e}。将在5秒后重试...")
-            time.sleep(5)
+                logger.error(f"推送失败，{retry_interval}秒后重试...")
+                time.sleep(retry_interval)
         except Exception as e:
-            logger.error(f"发生未知错误: {e}。将在5秒后重试...")
-            time.sleep(5)
+            logger.error(f"Git 事务执行失败: {e}")
+            time.sleep(retry_interval)
+            logger.info(f"{retry_interval}秒后重试...")
