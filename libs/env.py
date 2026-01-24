@@ -2,31 +2,29 @@ import sys
 import shutil
 from pathlib import Path
 
-# Calculate paths relative to this file
-COMMON_DIR = Path(__file__).resolve().parent
-ROOT_DIR = COMMON_DIR.parent
-LIBS_DIR = ROOT_DIR / "libs"
+# Calculate paths relative to this file (now in libs/)
+LIBS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = LIBS_DIR.parent
 LOGS_DIR = ROOT_DIR / "logs"
 
-# Ensure libs and common are in sys.path
-if str(LIBS_DIR) not in sys.path:
-    sys.path.append(str(LIBS_DIR))
-if str(COMMON_DIR) not in sys.path:
-    sys.path.append(str(COMMON_DIR))
+# Ensure libs and root are in sys.path
+for d in [LIBS_DIR, ROOT_DIR]:
+    if str(d) not in sys.path:
+        sys.path.insert(0, str(d))
 
 # Now we can import dp_logging
 try:
     from dp_logging import setup_logger
 except ImportError:
-    # Fallback if libs not found
+    # Fallback if dp_logging not found
     import logging
     def setup_logger(name, log_dir=None, **kwargs):
         logging.basicConfig(level=logging.INFO)
         return logging.getLogger(name)
 
-# Setup Config
-CONFIG_FILE = COMMON_DIR / "config.py"
-CONFIG_SAMPLE_FILE = COMMON_DIR / "config_sample.py"
+# Setup Config (config files are in root directory)
+CONFIG_FILE = ROOT_DIR / "config.py"
+CONFIG_SAMPLE_FILE = ROOT_DIR / "config_sample.py"
 
 logger = setup_logger("env_setup", log_dir=LOGS_DIR)
 
@@ -48,8 +46,6 @@ def get_path(key: str, create_dir: bool = True) -> Path:
     """Resolve a path from config, handling relative/absolute paths and creating directories."""
     dir_path_str = config.get(key)
     if not dir_path_str:
-        # Ideally raise error, but for compatibility maybe return None?
-        # The original code crashed if key invalid or logic failed essentially.
         raise ValueError(f"Config key '{key}' not found or empty.")
     
     p = Path(dir_path_str)

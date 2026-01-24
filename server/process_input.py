@@ -10,17 +10,17 @@ from datetime import datetime, timezone, timedelta
 import re
 import sys
 
-# Ensure common is in path to import env
+# Ensure libs is in path to import env
 SCRIPT_DIR = Path(__file__).resolve().parent
-COMMON_DIR = SCRIPT_DIR.parent / "common"
-if str(COMMON_DIR) not in sys.path:
-    sys.path.append(str(COMMON_DIR))
+LIBS_DIR = SCRIPT_DIR.parent / "libs"
+if str(LIBS_DIR) not in sys.path:
+    sys.path.insert(0, str(LIBS_DIR))
 
 # Import environment context
 try:
     from env import config, setup_logger, get_path
 except ImportError:
-    print("Error: Could not import 'env' from common.")
+    print("Error: Could not import 'env' from libs.")
     sys.exit(1)
 
 # Import libs (libs added by env)
