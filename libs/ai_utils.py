@@ -367,7 +367,7 @@ def get_all_ai_summaries(
         name = cfg.get("openai_api_name", "Unknown")
         try:
             summary = analyze_stock_market(content, ai_config=cfg)
-            summary = summary.replace("**"", " **"")
+            summary = summary.replace("**“", " **“")
             return name, summary
         except Exception as e:
             return name, f"Error: {e}"
@@ -427,6 +427,7 @@ def process_tasks_distributed(
             
             try:
                 summary = analyze_stock_market(content, ai_config=ai_config)
+                summary = summary.replace("**“", " **“")
                 name = ai_config.get("openai_api_name", "AI")
                 results[index] = (name, summary)
             except Exception as e:
@@ -503,6 +504,7 @@ class BatchTaskProcessor:
             
             try:
                 summary = analyze_stock_market(content, ai_config=ai_config)
+                summary = summary.replace("**“", " **“")
                 
                 if is_ai_response_error(summary):
                     raise RuntimeError(f"AI Response contains error: {summary}")
