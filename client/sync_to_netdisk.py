@@ -79,8 +79,8 @@ def find_dest_path(dest_root: Path, year: str, month: str, day: str, filename: s
     if path_ym_d.exists():
         return path_ym_d, True
     
-    # 不存在时，使用 YYYY/MM/DD 结构
-    return path_ymd, False
+    # 不存在时，使用 YYYY-MM/DD 结构
+    return path_ym_d, False
 
 
 def process_markdown_file(source_file: Path, dest_root: Path, 

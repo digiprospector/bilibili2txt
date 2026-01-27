@@ -208,7 +208,10 @@ def chat_completion(
         timeout=timeout
     )
     
-    return response.choices[0].message.content
+    if hasattr(response, "choices") and response.choices:
+        return response.choices[0].message.content or ""
+    else:
+        raise Exception(f"[{api_name}] 错误: {response}")
 
 
 def get_single_response(
