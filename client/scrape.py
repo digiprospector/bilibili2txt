@@ -203,7 +203,7 @@ def scrape(target_up_mid=None) -> str | None:
     logger.info("-------------------------------------\n")
     if all_new_videos:
         # 按长度排序
-        all_new_videos.sort(key=lambda v: v['duration'])
+        all_new_videos.sort(key=lambda v: v['duration'], reverse=True)
         
         new_videos_count = len(all_new_videos)
         current_time = time.strftime("%Y%m%d-%H%M%S")
