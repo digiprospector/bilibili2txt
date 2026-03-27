@@ -17,8 +17,8 @@ server_out_queue_set_logger(logger)
 server_in_queue_set_logger(logger)
 
 # 读取配置文件
-CONFIG_FILE = SCRIPT_DIR.parent / "common/config.py"
-CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "common/config_sample.py"
+CONFIG_FILE = SCRIPT_DIR.parent / "config.py"
+CONFIG_SAMPLE_FILE = SCRIPT_DIR.parent / "config_sample.py"
 
 def create_config_file():
     if not CONFIG_FILE.exists():

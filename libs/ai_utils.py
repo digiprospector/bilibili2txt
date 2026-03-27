@@ -518,10 +518,10 @@ class BatchTaskProcessor:
                 self.task_queue.task_done()
                 
             except Exception as e:
-                print(f"[⚠️ AI 退休] 账号 [{ai_name}] 发生错误，任务将回滚到队列。错误: {e}")
+                print(f"[⚠️ AI 失败] 账号 [{ai_name}] 发生错误，任务将回滚到队列。错误: {e}")
                 self.task_queue.put(task)
                 self.task_queue.task_done()
-                break  # 线程退出
+                #break  # 线程退出
 
     def add_task(self, task_id: Any, content: str, extra_info: Any = None) -> None:
         """向队列添加任务"""
