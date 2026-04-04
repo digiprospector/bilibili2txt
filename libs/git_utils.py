@@ -51,6 +51,8 @@ def reset_repo(repo_path: Path) -> None:
         repo.git.fetch('--all', prune=True)
         repo.git.reset('--hard', f'origin/{branch_name}')
         repo.git.clean('-fd')
+        # 确保本地分支追踪远程分支（orphan 重置后 upstream 可能丢失）
+        repo.git.branch('--set-upstream-to', f'origin/{branch_name}', branch_name)
         origin.pull()
         _logger.info("仓库已成功重置并与远程同步。")
         
@@ -188,3 +190,60 @@ def git_repo_transaction(
             _logger.error(f"Git 事务执行失败: {e}")
             _logger.info(f"{retry_interval}秒后重试...")
             time.sleep(retry_interval)
+
+
+def shrink_repo_if_empty(repo_path: Path, dirs_to_check: list[str]) -> bool:
+    """
+    检查指定目录是否都为空，如果为空，则删除 Git 仓库的历史记录，
+    并重新提交以减小仓库体积，同时保留指定的目录。
+    """
+    # 检查是否全部为空
+    for d in dirs_to_check:
+        d_path = repo_path / d
+        if not d_path.exists():
+            continue
+        # 排除 . 隐藏文件
+        has_files = False
+        for f in d_path.iterdir():
+            if not f.name.startswith('.'):
+                has_files = True
+                break
+        if has_files:
+            _logger.info(f"目录 {d} 非空，跳过仓库清理。")
+            return False
+            
+    _logger.info("指定目录均为空，准备清理仓库历史记录...")
+    try:
+        repo = git.Repo(repo_path)
+        active_branch = repo.active_branch.name
+        
+        # 确保指定目录有 .gitkeep，否则 git 不会跟踪空目录
+        for d in dirs_to_check:
+            d_path = repo_path / d
+            d_path.mkdir(parents=True, exist_ok=True)
+            keep_file = d_path / ".gitkeep"
+            if not keep_file.exists():
+                keep_file.touch()
+        
+        # 执行 orphan branch 逻辑
+        temp_branch = f"temp_orphan_{int(time.time())}"
+        repo.git.checkout('--orphan', temp_branch)
+        repo.git.add('-A')
+        repo.git.commit('-m', 'Reset repository history to shrink size')
+        repo.git.branch('-D', active_branch)
+        repo.git.branch('-m', active_branch)
+        
+        _logger.info("正在强制推送到远程仓库...")
+        repo.git.push('-f', 'origin', active_branch)
+        
+        # 清理无用的 git 对象
+        repo.git.gc('--prune=now')
+        
+        _logger.info("仓库历史记录已清理完成。")
+        return True
+    except GitCommandError as e:
+        _logger.error(f"发生 Git 操作错误: {e}")
+        return False
+    except Exception as e:
+        _logger.error(f"清理仓库历史记录失败: {e}")
+        return False

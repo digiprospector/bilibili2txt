@@ -1,10 +1,11 @@
 import argparse
 
+from bootstrap import QUEUE_DIR
+from git_utils import shrink_repo_if_empty
 from out_queue import out_queue
 from push_data_repo import push_data_repo
 from generate_md import create_markdown_files_from_text
 from sync_to_netdisk import sync_to_netdisk
-from push_data_repo import push_data_repo
 from ai_utils import test_all_ai_apis
 
 def main():
@@ -27,6 +28,10 @@ def main():
     create_markdown_files_from_text(force)
     sync_to_netdisk()
     push_data_repo()
+    
+    # 检查并清理 queue 仓库（当 from_stt 和 to_stt 都为空时）
+    shrink_repo_if_empty(QUEUE_DIR, ["from_stt", "to_stt"])
+    
 
 
 if __name__ == "__main__":
