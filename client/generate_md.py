@@ -41,8 +41,11 @@ def create_markdown_files_from_text(force: bool = False):
         nonlocal processed_count, error_count
         md_filepath = meta["md_filepath"]
         
+        current_num = processed_count + error_count + 1
+        progress_str = f"[{current_num}/{added_to_queue_count}]"
+        
         if ai_name == "Error":
-            logger.error(f"  - [失败] {meta['filename']}: {summary}")
+            logger.error(f"  - {progress_str} [失败] {meta['filename']}: {summary}")
             error_count += 1
             return
 
@@ -50,24 +53,20 @@ def create_markdown_files_from_text(force: bool = False):
         try:
             md_filepath.parent.mkdir(parents=True, exist_ok=True)
             md_filepath.write_text(md_content, encoding='utf-8')
-            logger.info(f"  - [成功] (AI: {ai_name}) 已创建 Markdown: '{md_filepath.name}'")
+            logger.info(f"  - {progress_str} [成功] (AI: {ai_name}) 已创建 Markdown: '{md_filepath.name}'")
             processed_count += 1
         except Exception as e:
             logger.error(f"  - [写入失败] {meta['filename']}: {e}")
             error_count += 1
 
-    # 启动任务处理器
-    processor = BatchTaskProcessor(on_result_callback=on_ai_result)
-
-    logger.info("正在扫描文件并加入任务队列...")
-
+    # 预先扫描并过滤出需要处理的任务，以便获取总数
+    tasks_to_process = []
     for text_filepath in text_files:
         meta = extract_metadata_from_filename(text_filepath.name)
         if not meta:
             logger.debug(f"  - [跳过] 文件名格式不匹配: {text_filepath.name}")
             continue
             
-        meta["text_filepath"] = text_filepath
         target_dir = text_filepath.parent.parent / "markdown" / meta["date_folder"]
         md_filepath = (target_dir / text_filepath.name).with_suffix('.md')
         
@@ -75,20 +74,32 @@ def create_markdown_files_from_text(force: bool = False):
             skipped_count += 1
             continue
             
-        try:
-            transcript = text_filepath.read_text(encoding='utf-8')
-            meta["transcript"] = transcript
-            meta["md_filepath"] = md_filepath
-            # 加入队列，立即开始处理
-            processor.add_task(text_filepath.name, transcript, extra_info=meta)
-            added_to_queue_count += 1
-        except Exception as e:
-            logger.error(f"读取或添加文件 {text_filepath.name} 失败: {e}")
+        meta["text_filepath"] = text_filepath
+        meta["md_filepath"] = md_filepath
+        tasks_to_process.append((text_filepath, meta))
+
+    added_to_queue_count = len(tasks_to_process)
 
     if added_to_queue_count == 0:
         logger.info(f"没有发现需要处理的新文件。跳过了 {skipped_count} 个已存在的文件。")
-    else:
-        logger.info(f"已将 {added_to_queue_count} 个任务加入队列。等待处理完成...")
+        return
+
+    # 启动任务处理器
+    processor = BatchTaskProcessor(on_result_callback=on_ai_result)
+
+    logger.info(f"正在读取文件并加入任务队列 (共 {added_to_queue_count} 个任务)...")
+
+    for text_filepath, meta in tasks_to_process:
+        try:
+            transcript = text_filepath.read_text(encoding='utf-8')
+            meta["transcript"] = transcript
+            # 加入队列，立即开始处理
+            processor.add_task(text_filepath.name, transcript, extra_info=meta)
+        except Exception as e:
+            logger.error(f"读取或添加文件 {text_filepath.name} 失败: {e}")
+            added_to_queue_count -= 1 # 如果添加失败，总数减少
+
+    logger.info(f"已将 {added_to_queue_count} 个任务加入队列。等待处理完成...")
     
     processor.wait_and_stop()
     logger.info(f"\n处理完成: 成功 {processed_count}, 失败 {error_count}, 跳过 {skipped_count}.")
