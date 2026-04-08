@@ -48,7 +48,9 @@ def main():
             logger.info("没有检测到新的要处理的视频，退出.")
             break
         
-        process_input()
+        if process_input() is False:
+            logger.error("由于致命错误 (HTTP 412)，停止服务器运行。")
+            break
         count += 1
         if DEBUG and count >= 3:
             logger.info("DEBUG模式下，已处理3轮，退出.")

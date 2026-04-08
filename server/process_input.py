@@ -178,7 +178,7 @@ def process_input():
         # 如果没有找到有效行，说明所有任务都已处理完毕，退出循环
         if line_with_newline is None:
             logger.info('没有找到有效行，所有任务处理完毕，退出。')
-            break
+            return True
 
         # 删除已处理的这一行，并保存回文件
         lines.remove(line_with_newline)
@@ -224,7 +224,11 @@ def process_input():
                     logger.info(f"这行没有bvid:{stripped_line}")
                     continue
             except Exception as e:
-                logger.info(f"处理 {line} 时出错: {e}")
+                error_msg = str(e)
+                logger.info(f"处理 {line} 时出错: {error_msg}")
+                if "HTTP Error 412" in error_msg:
+                    logger.error("检测到 HTTP Error 412: Precondition Failed。这通常意味着被 B站 屏蔽或需要人机验证。停止所有任务循环。")
+                    return False
                 continue
             
             if not downloaded_audio_files:
@@ -274,7 +278,11 @@ def process_input():
                     logger.warning(f"未找到音频文件 '{audio_file}'，跳过。")
             
         except Exception as e:
-            logger.info(f"处理 {line} 时出错: {e}")
+            error_msg = str(e)
+            logger.info(f"处理 {line} 时出错: {error_msg}")
+            if "HTTP Error 412" in error_msg:
+                logger.error("检测到 HTTP Error 412: Precondition Failed。这通常意味着被 B站 屏蔽或需要人机验证。停止所有任务循环。")
+                return False
         
         time.sleep(10)
 
