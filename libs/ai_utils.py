@@ -463,7 +463,8 @@ class BatchTaskProcessor:
         self, 
         system_prompt: str = STOCK_ANALYST_SYSTEM_PROMPT, 
         max_workers: Optional[int] = None,
-        on_result_callback: Optional[Callable[[Any, str, str, Any], None]] = None
+        on_result_callback: Optional[Callable[[Any, str, str, Any], None]] = None,
+        max_retries: int = 5
     ):
         """
         初始化处理器
@@ -472,9 +473,11 @@ class BatchTaskProcessor:
             system_prompt: 系统提示词
             max_workers: 最大工作线程数
             on_result_callback: 结果回调函数 (task_id, ai_name, summary, extra_info)
+            max_retries: 每个任务的最大重试次数
         """
         self.system_prompt = system_prompt
         self.on_result_callback = on_result_callback
+        self.max_retries = max_retries
         self.task_queue: queue.Queue = queue.Queue()
         self.ai_configs = AIConfigManager.get_all()
         
@@ -501,9 +504,24 @@ class BatchTaskProcessor:
         while not self.stop_event.is_set() or not self.task_queue.empty():
             try:
                 task = self.task_queue.get(timeout=1)
-                task_id, content, extra_info = task
+                # 解包任务信息，兼容旧格式
+                if len(task) == 3:
+                    task_id, content, extra_info = task
+                    retry_count = 0
+                    failed_workers = set()
+                else:
+                    task_id, content, extra_info, retry_count, failed_workers = task
             except queue.Empty:
                 continue
+            
+            # 避让逻辑：如果该 Worker 之前失败过这个任务，且还有其他 Worker 没尝试过，则放回队列并休眠
+            if ai_name in failed_workers:
+                if len(failed_workers) < self.num_threads:
+                    self.task_queue.put(task)
+                    self.task_queue.task_done()
+                    time.sleep(1)  # 短暂休眠，避开当前的抢夺
+                    continue
+                # 如果已经所有人都尝试并失败过了，下面会走到重试上限逻辑
             
             try:
                 summary = analyze_stock_market(content, ai_config=ai_config)
@@ -518,14 +536,23 @@ class BatchTaskProcessor:
                 self.task_queue.task_done()
                 
             except Exception as e:
-                print(f"[⚠️ AI 失败] 账号 [{ai_name}] 发生错误，任务将回滚到队列。错误: {e}")
-                self.task_queue.put(task)
-                self.task_queue.task_done()
-                #break  # 线程退出
+                new_retry_count = retry_count + 1
+                new_failed_workers = failed_workers | {ai_name}
+                
+                # 如果没到重试上限，且还有没试过的账号，就重新入队
+                if new_retry_count < self.max_retries and len(new_failed_workers) < self.num_threads:
+                    print(f"[⚠️ AI 失败] 账号 [{ai_name}] 发生错误，任务将回滚。重试次数: {new_retry_count}/{self.max_retries}。错误: {e}")
+                    self.task_queue.put((task_id, content, extra_info, new_retry_count, new_failed_workers))
+                    self.task_queue.task_done()
+                    time.sleep(2)  # 失败后强制休息，给其他 Worker 机会
+                else:
+                    print(f"[❌ AI 彻底失败] 任务 {task_id} 已尝试 {new_retry_count} 次，或所有 Worker 都已尝试。错误: {e}")
+                    self.task_queue.task_done()
 
     def add_task(self, task_id: Any, content: str, extra_info: Any = None) -> None:
         """向队列添加任务"""
-        self.task_queue.put((task_id, content, extra_info))
+        # (task_id, content, extra_info, retry_count, failed_workers)
+        self.task_queue.put((task_id, content, extra_info, 0, set()))
 
     def wait_and_stop(self) -> None:
         """等待所有已添加任务处理完并停止线程"""
