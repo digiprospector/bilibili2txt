@@ -59,6 +59,17 @@ def out_queue(duration_limit=864000, limit_type="less_than"):
     
     bv_list_file = TEMP_DIR / "bv_list.txt"
     
+    # 检查 bv_list.txt 是否已经存在有效的任务
+    if bv_list_file.exists():
+        try:
+            with open(bv_list_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip() and not line.strip().startswith('#'):
+                        logger.info(f"{bv_list_file.name} 中已存在未处理的任务，优先处理该任务。")
+                        return True
+        except Exception as e:
+            logger.error(f"读取 {bv_list_file.name} 时出错: {e}")
+    
     src_dir = QUEUE_DIR / "to_stt"
     
     while True:

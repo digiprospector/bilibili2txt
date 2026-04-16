@@ -155,6 +155,22 @@ def fetch_audio_link_from_json(bv_info):
     logger.info(f"yt-dlp 下载完成，找到 {len(downloaded_files)} 个音频文件。")
     return downloaded_files
 
+def _write_back_line(line_to_save, bv_list_file):
+    try:
+        current_lines = []
+        if bv_list_file.exists():
+            with open(bv_list_file, 'r', encoding='utf-8') as f_wb:
+                current_lines = f_wb.readlines()
+        
+        # 检查是否已经存在，避免重复
+        if line_to_save not in current_lines:
+            current_lines.insert(0, line_to_save)
+            with open(bv_list_file, 'w', encoding='utf-8') as f_wb:
+                f_wb.writelines(current_lines)
+            logger.info(f"已将未处理的任务行写回 {bv_list_file.name}")
+    except Exception as e_wb:
+        logger.error(f"写回任务行时出错: {e_wb}")
+
 def process_input():
     bv_list_file = TEMP_DIR / "bv_list.txt"
 
@@ -228,6 +244,7 @@ def process_input():
                 logger.info(f"处理 {line} 时出错: {error_msg}")
                 if "HTTP Error 412" in error_msg:
                     logger.error("检测到 HTTP Error 412: Precondition Failed。这通常意味着被 B站 屏蔽或需要人机验证。停止所有任务循环。")
+                    _write_back_line(line_with_newline, bv_list_file)
                     return False
                 continue
             
@@ -282,6 +299,7 @@ def process_input():
             logger.info(f"处理 {line} 时出错: {error_msg}")
             if "HTTP Error 412" in error_msg:
                 logger.error("检测到 HTTP Error 412: Precondition Failed。这通常意味着被 B站 屏蔽或需要人机验证。停止所有任务循环。")
+                _write_back_line(line_with_newline, bv_list_file)
                 return False
         
         time.sleep(10)

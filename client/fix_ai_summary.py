@@ -130,8 +130,7 @@ def fix_summaries():
             return
 
         # 稍微调整格式
-        summary = summary.replace("**"", " **"")
-        
+        summary = summary.replace("**“", " **“")
         # 更新内容
         new_content = update_or_add_ai_summary(meta["original_content"], summary, ai_name)
         
@@ -180,7 +179,10 @@ def fix_summaries():
         )
     
     logger.info(f"已加入 {len(tasks)} 个修复任务。等待处理完成...")
-    processor.wait_and_stop()
+    try:
+        processor.wait_and_stop()
+    except KeyboardInterrupt:
+        logger.warning("任务被用户中断。")
 
     logger.info("=" * 50)
     logger.info(f"修复任务结束: 成功 {stats['processed']}, 失败 {stats['error']}")

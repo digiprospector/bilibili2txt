@@ -101,7 +101,10 @@ def create_markdown_files_from_text(force: bool = False):
 
     logger.info(f"已将 {added_to_queue_count} 个任务加入队列。等待处理完成...")
     
-    processor.wait_and_stop()
+    try:
+        processor.wait_and_stop()
+    except KeyboardInterrupt:
+        logger.warning("任务被用户中断。")
     logger.info(f"\n处理完成: 成功 {processed_count}, 失败 {error_count}, 跳过 {skipped_count}.")
 
 if __name__ == "__main__":

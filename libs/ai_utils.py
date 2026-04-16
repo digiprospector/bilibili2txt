@@ -556,10 +556,23 @@ class BatchTaskProcessor:
 
     def wait_and_stop(self) -> None:
         """等待所有已添加任务处理完并停止线程"""
-        self.task_queue.join()
-        self.stop_event.set()
-        for t in self.threads:
-            t.join()
+        try:
+            while self.task_queue.unfinished_tasks > 0:
+                time.sleep(0.3)
+        except KeyboardInterrupt:
+            self.stop_event.set()
+            # 清空队列以快速停止
+            try:
+                while True:
+                    self.task_queue.get_nowait()
+                    self.task_queue.task_done()
+            except queue.Empty:
+                pass
+            raise
+        finally:
+            self.stop_event.set()
+            for t in self.threads:
+                t.join(timeout=1)
 
 
 # ============== 兼容性别名 ==============
