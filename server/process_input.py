@@ -26,6 +26,7 @@ except ImportError:
 # Import libs (libs added by env)
 from dp_bilibili_api import dp_bilibili
 from webdav import download_from_webdav_requests
+from bili_cookie import apply_bili_cookies_to_ydl_opts
 
 # Setup logger
 logger = setup_logger(Path(__file__).stem, log_dir=SCRIPT_DIR.parent / "logs")
@@ -137,6 +138,7 @@ def fetch_audio_link_from_json(bv_info):
         'continuedl': True,
         'retry_sleep': {'http': 10, 'fragment': 10, 'hls': 10}
     }
+    apply_bili_cookies_to_ydl_opts(ydl_opts, logger=logger)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
     

@@ -13,6 +13,7 @@ from bootstrap import config, get_standard_logger, QUEUE_DIR, TEMP_DIR
 # Import git utils and webdav (libs added by bootstrap)
 from git_utils import set_logger as git_utils_set_logger
 from webdav import upload_to_webdav_requests, list_webdav_files
+from bili_cookie import apply_bili_cookies_to_ydl_opts
 
 # Setup logger
 logger = get_standard_logger(__file__)
@@ -31,7 +32,7 @@ def check_webdav_exists(bvid, webdav_files):
             return True
     return False
 
-def download_audio(bvid, video_url):
+def download_audio(bvid, video_url, index=None, total=None):
     """下载视频音频"""
     output_audio_template = TEMP_DIR / f"{bvid}_%(playlist_index)s"
     
@@ -46,14 +47,16 @@ def download_audio(bvid, video_url):
             'preferredquality': '192',
         }],
     }
+    apply_bili_cookies_to_ydl_opts(ydl_opts, logger=logger)
     
+    progress = f"[{index}/{total}] " if index is not None and total is not None else ""
     try:
-        logger.info(f"开始下载视频音频: {video_url}")
+        logger.info(f"{progress}开始下载视频音频: {video_url}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([video_url])
         return True
     except Exception as e:
-        logger.error(f"下载视频 {bvid} 失败: {e}")
+        logger.error(f"{progress}下载视频 {bvid} 失败: {e}")
         return False
 
 def upload_parts(bvid, webdav_files):
@@ -80,7 +83,7 @@ def upload_parts(bvid, webdav_files):
                 logger.error(f"上传失败: {local_path.name}")
     return uploaded_any
 
-def process_video_info(bv_info, webdav_files):
+def process_video_info(bv_info, webdav_files, index=None, total=None):
     """处理单个视频信息"""
     bvid = bv_info.get('bvid')
     title = bv_info.get('title')
@@ -101,7 +104,7 @@ def process_video_info(bv_info, webdav_files):
         return True
 
     video_url = f"https://www.bilibili.com/video/{bvid}"
-    if download_audio(bvid, video_url):
+    if download_audio(bvid, video_url, index=index, total=total):
         if upload_parts(bvid, webdav_files):
             return True
     
@@ -129,10 +132,11 @@ def local_download_and_upload_to_webdav():
     if not input_files:
         logger.info(f"{src_dir} 目录中没有待处理的文件，退出。")
         return
-    
-    found_and_processed = False
+
+    # 第一阶段：扫描所有文件，收集符合条件（待下载）的视频列表
+    duration_limit = config.get("local_download_audio_seconds", 1800)
+    pending = []  # list of (bv_info,) for videos that need downloading
     for file_path in input_files:
-        logger.info(f"正在扫描文件: {file_path.name}")
         try:
             content = file_path.read_text(encoding='utf-8')
             for line in content.splitlines():
@@ -141,17 +145,25 @@ def local_download_and_upload_to_webdav():
                     continue
                 try:
                     bv_info = json.loads(line)
-                    if process_video_info(bv_info, webdav_files):
-                        found_and_processed = True
+                    if bv_info.get('status') == 'normal' and bv_info.get('duration', 0) > duration_limit:
+                        bvid = bv_info.get('bvid', '')
+                        if not check_webdav_exists(bvid, webdav_files):
+                            pending.append(bv_info)
                 except json.JSONDecodeError:
                     logger.warning(f"无法解析 JSON 行: {line[:50]}...")
-                    continue
         except Exception as e:
             logger.error(f"读取文件 {file_path.name} 失败: {e}")
-            continue
-        
-    if not found_and_processed:
-        logger.info(f"没有找到需要下载的视频（时长 > {config.get('local_download_audio_seconds', 1800)}s）。")
+
+    total = len(pending)
+    if total == 0:
+        logger.info(f"没有找到需要下载的视频（时长 > {duration_limit}s）。")
+        return
+
+    logger.info(f"共找到 {total} 个待下载视频。")
+
+    # 第二阶段：逐个下载并打印进度
+    for idx, bv_info in enumerate(pending, start=1):
+        process_video_info(bv_info, webdav_files, index=idx, total=total)
 
     # 删除temp目录下的音频文件
     for file_path in TEMP_DIR.glob("*.mp3"):
