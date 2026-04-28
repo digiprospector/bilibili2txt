@@ -43,21 +43,27 @@ except ImportError:
         return Path(__file__).resolve().parent.parent / "temp"
 
 
-def get_bili_cookie_file(logger: Optional[logging.Logger] = None) -> Optional[Path]:
+def get_bili_cookie_file(
+    logger: Optional[logging.Logger] = None,
+    cookie_filename: str = "bili_cookies.json",
+) -> Optional[Path]:
     """
-    读取 userdata/bili_cookies.json，将其转换为 Netscape 格式 cookie 文件（写入 temp 目录）。
+    读取 userdata/{cookie_filename}，将其转换为 Netscape 格式 cookie 文件（写入 temp 目录）。
 
     Args:
         logger: 可选的日志对象，用于输出加载状态。
+        cookie_filename: JSON cookie 文件名，默认为 'bili_cookies.json'。
+                         server 端可传入 'server_bili_cookies.json'。
 
     Returns:
         Netscape cookie 文件路径，若 JSON 文件不存在或读取失败则返回 None。
     """
-    cookies_json = _get_userdata_dir() / "bili_cookies.json"
+    cookies_json = _get_userdata_dir() / cookie_filename
     if not cookies_json.exists():
         return None
     try:
-        netscape_file = _get_temp_dir() / "bili_cookies.txt"
+        # Netscape 文件名与 JSON 文件名对应（换扩展名为 .txt）
+        netscape_file = _get_temp_dir() / (Path(cookie_filename).stem + ".txt")
         netscape_file.parent.mkdir(parents=True, exist_ok=True)
 
         # 若 txt 文件存在且比 JSON 新，直接复用，无需重新生成
@@ -74,26 +80,32 @@ def get_bili_cookie_file(logger: Optional[logging.Logger] = None) -> Optional[Pa
                 f.write(f".bilibili.com\tTRUE\t/\tFALSE\t0\t{name}\t{value}\n")
 
         if logger:
-            logger.info(f"已加载 bili_cookies.json，共 {len(cookies)} 个 cookie")
+            logger.info(f"已加载 {cookie_filename}，共 {len(cookies)} 个 cookie")
         return netscape_file
     except Exception as e:
         if logger:
-            logger.warning(f"加载 bili_cookies.json 失败，将不使用 cookie: {e}")
+            logger.warning(f"加载 {cookie_filename} 失败，将不使用 cookie: {e}")
         return None
 
 
-def apply_bili_cookies_to_ydl_opts(ydl_opts: dict, logger: Optional[logging.Logger] = None) -> dict:
+def apply_bili_cookies_to_ydl_opts(
+    ydl_opts: dict,
+    logger: Optional[logging.Logger] = None,
+    cookie_filename: str = "bili_cookies.json",
+) -> dict:
     """
-    若 bili_cookies.json 存在，将 Netscape cookie 文件路径注入 yt-dlp 的 cookiefile 选项。
+    若指定的 cookie JSON 文件存在，将 Netscape cookie 文件路径注入 yt-dlp 的 cookiefile 选项。
 
     Args:
         ydl_opts: yt-dlp 选项字典（会在原地修改并返回）。
         logger: 可选的日志对象。
+        cookie_filename: JSON cookie 文件名，默认为 'bili_cookies.json'。
+                         server 端可传入 'server_bili_cookies.json'。
 
     Returns:
         更新后的 ydl_opts 字典。
     """
-    cookie_file = get_bili_cookie_file(logger=logger)
+    cookie_file = get_bili_cookie_file(logger=logger, cookie_filename=cookie_filename)
     if cookie_file:
         ydl_opts['cookiefile'] = str(cookie_file)
     return ydl_opts

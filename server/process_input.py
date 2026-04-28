@@ -138,7 +138,7 @@ def fetch_audio_link_from_json(bv_info):
         'continuedl': True,
         'retry_sleep': {'http': 10, 'fragment': 10, 'hls': 10}
     }
-    apply_bili_cookies_to_ydl_opts(ydl_opts, logger=logger)
+    apply_bili_cookies_to_ydl_opts(ydl_opts, logger=logger, cookie_filename="server_bili_cookies.json")
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
     
