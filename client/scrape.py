@@ -103,6 +103,12 @@ def process_video(conn, dp_blbl, video_info, all_new_videos):
         details = dp_blbl.get_video_info(bvid)
         if details:
             video_info.update(details)
+            
+            # 检查视频时长是否超过最大限制
+            scrape_duration_max = config.get("scrape_duration_max", 14400)
+            if video_info.get("duration", 0) > scrape_duration_max:
+                video_info["status"] = "too_long"
+                logger.info(f"      [跳过] 视频时长 {video_info['duration']}s 超过最大限制 {scrape_duration_max}s，标记为 too_long")
         
         if save_video_to_database(conn, video_info):
             all_new_videos.append(video_info)
