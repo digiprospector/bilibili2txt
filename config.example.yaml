@@ -1,0 +1,50 @@
+app:
+  temp_dir: temp
+  logs_dir: logs
+
+data:
+  repo_dir: data
+
+queue:
+  repo_dir: queue
+  pending_dir: pending
+  claimed_dir: claimed
+  results_dir: results
+  done_dir: done
+  failed_dir: failed
+
+bilibili:
+  target_groups:
+    - 默认分组
+  request_interval: 3
+  scrape_duration_max: 7200
+
+webdav:
+  url: https://your-webdav-server.example/dav/
+  username: your_username
+  password_env: B2T_WEBDAV_PASSWORD
+  proxy: ""
+
+client:
+  local_download_audio_seconds: 1800
+  netdisk_dir: D:/Netdisk
+  wait_interval_seconds: 60
+  wait_timeout_seconds: 0
+
+server:
+  server_id: colab-a
+  faster_whisper_path: /content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl
+  max_duration_seconds: 864000
+  claim_timeout_minutes: 180
+  max_tasks: 0
+
+ai:
+  selected: example
+  providers:
+    - name: example
+      enable: true
+      api_key: "your-openai-api-key"
+      base_url: https://api.openai.com/v1
+      model: gpt-4o-mini
+      interval: 12
+
