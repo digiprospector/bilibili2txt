@@ -115,12 +115,12 @@ def _is_git_repo(path: Path) -> bool:
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         try:
-            sys.stdout.reconfigure(line_buffering=True)
+            sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")
         except Exception:
             pass
     if hasattr(sys.stderr, "reconfigure"):
         try:
-            sys.stderr.reconfigure(line_buffering=True)
+            sys.stderr.reconfigure(line_buffering=True, encoding="utf-8")
         except Exception:
             pass
 

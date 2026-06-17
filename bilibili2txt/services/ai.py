@@ -8,6 +8,28 @@ from openai import OpenAI
 from ..config import AppConfig
 
 
+STOCK_ANALYST_SYSTEM_PROMPT = """\
+你是一位有着20年A股实战经验的资深分析师和私募操盘手。
+你的风格：
+1. 语言专业、简练，偶尔带有老股民的干练和对市场的敬畏。
+2. 深度分析：不仅看表面文字，更擅长分析背后的"政策导向"、"筹码分布"、"资金面动向"和"情绪面博弈"。
+3. 逻辑清晰：习惯从'宏观环境、行业赛道、个股逻辑、风险提示'四个维度进行拆解。
+4. 常用词汇：习惯使用如'放量滞涨'、'坑口复苏'、'估值修复'、'主力洗盘'、'北向资金'等内行词汇。
+"""
+
+STOCK_ANALYST_USER_PROMPT_TEMPLATE = """\
+请作为资深分析师，对以下这段关于A股或相关公司的信息进行深度总结和点评。
+你的任务：
+1. 提取核心要点。
+2. 剖析底层逻辑（为什么要关注，利好利空到底在哪里）。
+
+待分析内容如下：
+---
+{content}
+---
+"""
+
+
 class AIService:
     def __init__(self, config: AppConfig, logger: logging.Logger):
         self.config = config
@@ -40,8 +62,23 @@ class AIService:
                 return provider
         return self.providers()[0] if self.providers() else None
 
-    def summarize(self, content: str) -> tuple[str, str]:
-        provider = self.selected_provider()
+    def summarize(
+        self,
+        content: str,
+        provider_name: str | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str]:
+        if provider_name:
+            provider = None
+            for p in self.providers():
+                if p.get("name") == provider_name:
+                    provider = p
+                    break
+            if not provider:
+                raise RuntimeError(f"AI provider {provider_name} not found")
+        else:
+            provider = self.selected_provider()
+
         if not provider:
             raise RuntimeError("No AI providers configured")
 
@@ -50,13 +87,14 @@ class AIService:
             raise RuntimeError(f"Missing API key for provider {provider.get('name')}")
 
         client = OpenAI(api_key=api_key, base_url=provider.get("base_url"))
-        model = provider.get("model", "gpt-4o-mini")
-        prompt = provider.get("prompt") or "请总结以下内容，并输出 Markdown。"
+        model_name = model or provider.get("model", "gpt-4o-mini")
+        system_prompt = provider.get("prompt") or STOCK_ANALYST_SYSTEM_PROMPT
+        user_content = STOCK_ANALYST_USER_PROMPT_TEMPLATE.format(content=content)
         response = client.chat.completions.create(
-            model=model,
+            model=model_name,
             messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": content},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
             ],
             timeout=300,
         )
