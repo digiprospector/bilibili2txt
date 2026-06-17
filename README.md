@@ -66,8 +66,11 @@ python b2t.py client finish
 一键本地流程：
 
 ```bash
+# 一键自动运行完整流程（默认等待转写完成并渲染归档）
 python b2t.py client run
-python b2t.py client run --wait
+
+# 仅提交任务并立即退出（不等待）
+python b2t.py client run --no-wait
 ```
 
 Server 远程转写节点：
