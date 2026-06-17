@@ -42,6 +42,60 @@ python b2t.py <client|server|admin|init> <command>
 
    编辑 `data/config.yaml`，填入对应配置。真实密钥建议放在环境变量或 `data/.env` 中，不要提交到代码仓库。
 
+## 服务器配置
+
+服务器使用colab，可以多个账号同时运行，以提高效率。
+服务器上需要有fastest-whisper-XXL, github的key文件。因为需要把github的key文件放在服务器上，我选择用一个小号，专门生成queue的仓库。
+
+1. **faster-whisper-XXL**
+访问 https://github.com/Purfview/whisper-standalone-win/releases/tag/Faster-Whisper-XXL, 看到linux版本的包, 复制下载链接
+回到colab的终端, 运行
+
+```sh
+cd /content/drive/MyDrive/
+rm -rf Faster-Whisper-XXL
+#下面的地址换成最新版的
+wget https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_linux.7z
+#如果没有7z程序安装一下
+apt install p7zip-full
+#解压
+7z x Faster-Whisper-XXL_r245.4_linux.7z
+#删除压缩包
+rm Faster-Whisper-XXL_r245.4_linux.7z license.txt
+```
+
+2. **clone代码**
+
+```sh
+mkdir -p /content/drive/MyDrive/github
+cd /content/drive/MyDrive/github
+git clone https://github.com/digiprospector/bilibili2txt.git
+cd bilibili2txt/
+git submodule init
+git submodule update
+```
+3. **github的key文件**
+
+key文件放到
+/content/drive/MyDrive/小号_id_ed25519_github
+
+4. **复制colab notebook**
+
+```sh
+cp /content/drive/MyDrive/github/bilibili2txt/notebooks/bilibili2txt_server_colab.ipynb /content/drive/MyDrive/Colab Notebooks/bilibili2txt_server_colab.ipynb
+```
+
+5. **修改config.yaml**
+
+```sh
+cp config_example.yaml config.yaml
+```
+修改config.yaml中的server_id，这个是用于区分server的字符串。
+  
+6. **打开colab的网站**
+
+打开/content/drive/MyDrive/Colab Notebooks/bilibili2txt_server_colab.ipynb文件，运行
+
 ## 常用命令
 
 初始化（首次运行或重新初始化）：
