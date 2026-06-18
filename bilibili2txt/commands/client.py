@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 
 from ..config import CommandContext
 from ..models import Task
-from ..services.ai import AIService
+from ..services.ai import AIService, format_api_error
 from ..services.audio import AudioService
 from ..services.bilibili import BilibiliService
 from ..services.gitqueue import GitQueue
@@ -326,8 +326,9 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.info("已生成 Markdown [%d/%d]: %s (由 %s 生成)", idx, total, target, ai_provider)
             succeeded += 1
         except Exception as exc:
-            db.record_render(meta.bvid, text_file, None, None, "failed", str(exc))
-            logger.error("为 %s 生成总结失败 [%d/%d]: %s", text_file, idx, total, exc)
+            formatted_err = format_api_error(exc)
+            db.record_render(meta.bvid, text_file, None, None, "failed", formatted_err)
+            logger.error("为 %s 生成总结失败 [%d/%d]: %s", text_file, idx, total, formatted_err)
             failed += 1
             continue
 

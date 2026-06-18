@@ -3,9 +3,51 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from openai import OpenAI
+from openai import OpenAI, APIError, APITimeoutError, APIConnectionError
 
 from ..config import AppConfig
+
+
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+
+def format_api_error(exc: Exception) -> str:
+    if isinstance(exc, APITimeoutError):
+        return "网络请求超时，请检查您的网络连接或代理设置。"
+    elif isinstance(exc, APIConnectionError):
+        return f"网络连接失败，请检查您的代理或网络设置。错误详情: {exc}"
+    elif isinstance(exc, APIError):
+        status_code = getattr(exc, "status_code", None)
+        body = getattr(exc, "body", None)
+        message = None
+        code = None
+        err_type = None
+        if isinstance(body, dict) and "error" in body:
+            err = body["error"]
+            if isinstance(err, dict):
+                message = err.get("message")
+                code = err.get("code")
+                err_type = err.get("type")
+        if not message:
+            message = getattr(exc, "message", None) or str(exc)
+        if not code:
+            code = getattr(exc, "code", None)
+        if not err_type:
+            err_type = getattr(exc, "type", None)
+
+        parts = []
+        if status_code is not None:
+            parts.append(f"HTTP {status_code}")
+        if code:
+            parts.append(f"Code: {code}")
+        if err_type:
+            parts.append(f"Type: {err_type}")
+        if message:
+            parts.append(f"Message: {message}")
+
+        return " | ".join(parts) if parts else str(exc)
+    return str(exc)
+
 
 
 STOCK_ANALYST_SYSTEM_PROMPT = """\
@@ -86,7 +128,11 @@ class AIService:
         if not api_key:
             raise RuntimeError(f"Missing API key for provider {provider.get('name')}")
 
-        client = OpenAI(api_key=api_key, base_url=provider.get("base_url"))
+        client = OpenAI(
+            api_key=api_key,
+            base_url=provider.get("base_url"),
+            default_headers={"User-Agent": DEFAULT_USER_AGENT},
+        )
         model_name = model or provider.get("model", "gpt-4o-mini")
         system_prompt = provider.get("prompt") or STOCK_ANALYST_SYSTEM_PROMPT
         user_content = STOCK_ANALYST_USER_PROMPT_TEMPLATE.format(content=content)
@@ -107,7 +153,11 @@ class AIService:
         if not api_key:
             return False, f"[{name}] missing API key"
         try:
-            client = OpenAI(api_key=api_key, base_url=provider.get("base_url"))
+            client = OpenAI(
+                api_key=api_key,
+                base_url=provider.get("base_url"),
+                default_headers={"User-Agent": DEFAULT_USER_AGENT},
+            )
             response = client.chat.completions.create(
                 model=provider.get("model", "gpt-4o-mini"),
                 messages=[
@@ -119,7 +169,7 @@ class AIService:
             reply = (response.choices[0].message.content or "").strip()
             return "OK" in reply.upper(), f"[{name}] reply={reply}"
         except Exception as exc:
-            return False, f"[{name}] {exc}"
+            return False, f"[{name}] {format_api_error(exc)}"
 
     def _resolve_secret(self, provider: dict[str, Any], key: str) -> str | None:
         env_key = provider.get(f"{key}_env")

@@ -9,7 +9,7 @@ from ..database import migrate_main_database
 from ..models import Task
 from ..services.audio import AudioService
 from ..services.bilibili import BilibiliService
-from ..services.ai import AIService
+from ..services.ai import AIService, format_api_error
 from ..services.gitrepo import GitRepo
 from ..services.webdav import WebDavClient
 from ..services.video_id import parse_video_input
@@ -58,7 +58,11 @@ def webdav_upload(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 def webdav_clean(ctx: CommandContext, args, logger: logging.Logger) -> int:
     client = WebDavClient.from_config(ctx.config, logger)
-    files = _list_webdav_files(client, logger)
+    try:
+        files = _list_webdav_files(client, logger)
+    except Exception as exc:
+        logger.error("WebDAV 清理失败: %s", exc)
+        return 1
     logger.info("待删除的 WebDAV 文件数: %s", len(files))
     failed = 0
     for name in files:
@@ -94,16 +98,27 @@ def _list_webdav_files(client: WebDavClient, logger: logging.Logger) -> list[str
     import xml.etree.ElementTree as ET
     import requests
 
-    response = requests.request(
-        "PROPFIND",
-        client.base_url,
-        auth=(client.username, client.password),
-        headers={"Depth": "1"},
-        timeout=30,
-        proxies=client.proxies,
-    )
-    response.raise_for_status()
-    root = ET.fromstring(response.content)
+    try:
+        response = requests.request(
+            "PROPFIND",
+            client.base_url + "/",
+            auth=(client.username, client.password),
+            headers={"Depth": "1"},
+            timeout=30,
+            proxies=client.proxies,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        resp_text = ""
+        if hasattr(exc, "response") and exc.response is not None:
+            resp_text = f"。服务器返回内容:\n{exc.response.text[:1000]}"
+        raise RuntimeError(f"请求 WebDAV 失败: {exc}{resp_text}") from exc
+
+    try:
+        root = ET.fromstring(response.content)
+    except ET.ParseError as exc:
+        raise ValueError(f"解析 WebDAV XML 响应失败: {exc}。服务器返回内容的前 1000 个字符为:\n{response.text[:1000]}") from exc
+
     ns = {"d": "DAV:"}
     files: list[str] = []
     for href in root.findall(".//d:href", ns):
@@ -262,7 +277,7 @@ def check_ai(ctx: CommandContext, args, logger: logging.Logger) -> int:
             print(result)
             return 0
         except Exception as exc:
-            logger.error("AI 总结测试失败: %s", exc)
+            logger.error("AI 总结测试失败: %s", format_api_error(exc))
             return 1
 
     providers = service.providers()
@@ -305,7 +320,7 @@ def fix_summaries(_ctx: CommandContext, _args, _logger: logging.Logger) -> int:
                 logger.info("已修复总结: %s", result[0])
                 succeeded += 1
         except Exception as exc:
-            logger.error("为 %s 修复总结失败: %s", text_file, exc)
+            logger.error("为 %s 修复总结失败: %s", text_file, format_api_error(exc))
             failed += 1
     _sync_netdisk_best_effort(ctx, logger)
     logger.info("修复总结汇总: 成功=%s 失败=%s", succeeded, failed)
@@ -347,7 +362,7 @@ def resummarize(ctx: CommandContext, args, logger: logging.Logger) -> int:
         if result:
             logger.info("已重新生成 Markdown: %s", result[0])
     except Exception as exc:
-        logger.error("AI 重新总结失败: %s", exc)
+        logger.error("AI 重新总结失败: %s", format_api_error(exc))
         return 1
     _sync_netdisk_best_effort(ctx, logger)
     return 0
