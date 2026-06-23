@@ -137,12 +137,15 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     temp_tasks_dir = ctx.config.temp_dir / "tasks"
     pending_dir = queue.pending_dir
+    failed_dir = queue.failed_dir
 
     files = []
     if temp_tasks_dir.exists():
         files.extend(_collect_json_files(temp_tasks_dir, recursive=True))
     if pending_dir.exists():
         files.extend(_collect_json_files(pending_dir, recursive=True))
+    if failed_dir.exists():
+        files.extend(_collect_json_files(failed_dir, recursive=True))
 
     # Deduplicate files by absolute path to avoid duplicate processing
     seen_paths = set()
@@ -161,6 +164,8 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
     succeeded = 0
     skipped = 0
     failed = 0
+    queue_modified = False
+
     for path in files:
         try:
             task = Task.from_file(path)
@@ -168,28 +173,92 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.error("无效任务文件 %s: %s", path, exc)
             failed += 1
             continue
-        if task.status != "normal":
-            logger.info("跳过非 normal 状态任务: %s status=%s", task.task_id, task.status)
-            skipped += 1
-            continue
+
+        is_failed_task = _is_under(path, failed_dir)
+
+        if is_failed_task:
+            if task.client_retries >= 3:
+                logger.info("跳过已达到最大客户端重试次数的任务: %s client_retries=%s", task.task_id, task.client_retries)
+                skipped += 1
+                continue
+            if not task.last_error or "yt-dlp" not in task.last_error:
+                logger.info("跳过非 yt-dlp 失败任务: %s last_error=%s", task.task_id, task.last_error)
+                skipped += 1
+                continue
+        else:
+            if task.status != "normal":
+                logger.info("跳过非 normal 状态任务: %s status=%s", task.task_id, task.status)
+                skipped += 1
+                continue
+
         if task.duration <= min_duration:
             logger.info("跳过过短任务: %s 时长=%s <= %s", task.task_id, task.duration, min_duration)
             skipped += 1
             continue
+
+        audio_on_webdav = False
         if f"{task.bvid}.mp3" in remote_files:
-            logger.info("跳过已在 WebDAV 上存在的任务: %s (%s.mp3)", task.task_id, task.bvid)
-            skipped += 1
+            audio_on_webdav = True
+        else:
+            for rf in remote_files:
+                if rf.startswith(f"{task.bvid}_") and rf.endswith(".mp3"):
+                    audio_on_webdav = True
+                    break
+
+        if audio_on_webdav:
+            if is_failed_task:
+                logger.info("音频已在 WebDAV 上存在，将失败任务移回 pending: %s", task.task_id)
+                task.reset_for_resubmit()
+                queue.add_pending_task(task)
+                if path.exists():
+                    path.unlink()
+                failed_task_dir = failed_dir / task.task_id
+                if failed_task_dir.exists() and failed_task_dir.is_dir():
+                    try:
+                        shutil.rmtree(failed_task_dir)
+                    except Exception as e:
+                        logger.warning("删除失败任务目录 %s 失败: %s", failed_task_dir, e)
+                queue_modified = True
+                succeeded += 1
+            else:
+                logger.info("跳过已在 WebDAV 上存在的任务: %s (%s.mp3)", task.task_id, task.bvid)
+                skipped += 1
             continue
 
         try:
+            if is_failed_task:
+                task.client_retries += 1
+                task.write_json(path)
+                queue_modified = True
+
             audio_files = audio.download_task_audio(task)
             if not audio.upload_task_audio(task, audio_files):
                 failed += 1
                 continue
+
+            if is_failed_task:
+                task.reset_for_resubmit()
+                queue.add_pending_task(task)
+                if path.exists():
+                    path.unlink()
+                failed_task_dir = failed_dir / task.task_id
+                if failed_task_dir.exists() and failed_task_dir.is_dir():
+                    try:
+                        shutil.rmtree(failed_task_dir)
+                    except Exception as e:
+                        logger.warning("删除失败任务目录 %s 失败: %s", failed_task_dir, e)
+                queue_modified = True
+
             succeeded += 1
         except Exception as exc:
             logger.exception("为 %s 准备音频失败: %s", task.task_id, exc)
             failed += 1
+
+    if queue_modified:
+        try:
+            queue.commit_and_push("prepare-audio: retry failed tasks")
+        except Exception as exc:
+            logger.error("提交队列修改失败: %s", exc)
 
     logger.info("准备音频总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
     return 0 if failed == 0 else 1
@@ -304,18 +373,23 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
     succeeded = 0
     skipped = 0
     failed = 0
-    total = len(text_files)
-    for idx, text_file in enumerate(text_files, 1):
+
+    to_render = []
+    for text_file in text_files:
         meta = parse_transcript_filename(text_file)
         if not meta:
-            logger.info("跳过无法识别的文稿文件名 [%d/%d]: %s", idx, total, text_file.name)
+            logger.info("跳过无法识别的文稿文件名: %s", text_file.name)
             skipped += 1
             continue
         target = md_path_for(meta, markdown_root, text_file)
         if target.exists() and not args.force:
-            logger.debug("跳过已存在的 Markdown [%d/%d]: %s", idx, total, target)
+            logger.debug("跳过已存在的 Markdown: %s", target)
             skipped += 1
             continue
+        to_render.append((text_file, meta, target))
+
+    total = len(to_render)
+    for idx, (text_file, meta, target) in enumerate(to_render, 1):
         transcript = text_file.read_text(encoding="utf-8")
         try:
             ai_provider, summary = ai.summarize(transcript)
@@ -357,8 +431,90 @@ def finish(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0
 
 
+def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
+    logger.info("=== 开始环境检查 ===")
+
+    # 1. 测试 Bilibili 下载并上传到 WebDAV
+    logger.info("--- 测试 Bilibili 真实下载并上传到 WebDAV ---")
+    try:
+        test_url = "https://www.bilibili.com/video/BV1v49YBHESJ"
+        logger.info("Bilibili 下载测试地址: %s", test_url)
+
+        test_task = Task(
+            task_id="env_check_test",
+            bvid="BV1v49YBHESJ",
+            title="env_check_test",
+            up_name="test",
+            up_mid=None,
+            pubdate=None,
+            duration=0,
+            cid=None,
+            status="normal",
+            source_url=test_url,
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        audio = AudioService(ctx.config, logger)
+        audio_files = audio.download_task_audio(test_task)
+        logger.info("Bilibili 下载测试通过（已下载）。现在开始测试上传...")
+
+        webdav = WebDavClient.from_config(ctx.config, logger)
+        for local_path in audio_files:
+            if not local_path.exists():
+                continue
+            logger.info("准备上传到 WebDAV: %s", local_path.name)
+            remote_name = f"test_download_{local_path.name}"
+            if webdav.upload(local_path, remote_name):
+                logger.info("WebDAV 上传测试成功: %s。正在清理...", remote_name)
+                local_path.unlink(missing_ok=True)
+                webdav.delete(remote_name)
+            else:
+                logger.error("WebDAV 上传测试失败: %s", local_path.name)
+                return False
+
+        if not audio_files:
+            logger.warning("未找到下载的音频文件，下载可能失败。")
+            return False
+
+    except Exception as e:
+        logger.error("Bilibili 下载与 WebDAV 上传测试遇到异常: %s", e)
+        return False
+
+    # 2. 测试 WebDAV 获取列表
+    logger.info("--- 测试 WebDAV 获取列表 ---")
+    try:
+        webdav = WebDavClient.from_config(ctx.config, logger)
+        webdav_files = webdav.list_files()
+        logger.info("WebDAV 列表获取测试通过，共 %d 个文件。", len(webdav_files))
+    except Exception as e:
+        logger.error("WebDAV 列表测试遇到异常: %s", e)
+        return False
+
+    # 3. 测试 Git Pull
+    logger.info("--- 测试 Git Pull ---")
+    try:
+        queue = GitQueue(ctx.config.queue_dir, logger)
+        queue.ensure_layout()
+        logger.info("正在对 %s 执行 git pull (sync)...", ctx.config.queue_dir)
+        queue.sync()
+        logger.info("Git Pull 测试通过。")
+    except Exception as e:
+        logger.error("Git Pull 测试遇到异常: %s", e)
+        return False
+
+    logger.info("=== 环境检查全部通过 ===\n")
+    return True
+
+
 def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
     logger.info("客户端运行启动")
+
+    if not getattr(args, "skip_env_check", False):
+        if not env_check(ctx, logger):
+            logger.error("环境检查未通过，终止运行。")
+            return 1
+        logger.info("环境检查通过，继续执行客户端流程。")
+    else:
+        logger.info("已设置 --skip-env-check，跳过环境检查")
     if getattr(args, "skip_scan", False):
         logger.info("已设置 --skip-scan，跳过扫描步骤")
         scan_code = 0

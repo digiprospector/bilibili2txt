@@ -32,6 +32,7 @@ class Task:
     last_error: str | None = None
     failed_at: str | None = None
     failed_by: str | None = None
+    client_retries: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
@@ -55,6 +56,7 @@ class Task:
             last_error=data.get("last_error"),
             failed_at=data.get("failed_at"),
             failed_by=data.get("failed_by"),
+            client_retries=int(data.get("client_retries") or 0),
         )
 
     @classmethod
@@ -112,6 +114,7 @@ class Task:
 
     def reset_for_resubmit(self) -> None:
         self.attempts = 0
+        self.client_retries = 0
         self.claimed_by = None
         self.claimed_at = None
         self.last_error = None

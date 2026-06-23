@@ -65,7 +65,7 @@ def test_run_calls_finish_when_wait_is_active(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(client_commands, "finish", lambda *a: called.append("finish") or 0)
 
     ctx = _context(tmp_path)
-    args = Namespace(wait=True)
+    args = Namespace(wait=True, skip_env_check=True)
     code = client_commands.run(ctx, args, logging.getLogger("test"))
 
     assert code == 0

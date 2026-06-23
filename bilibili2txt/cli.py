@@ -36,6 +36,7 @@ ARG_MAX_PAGES = (("-p", "--max-pages"), {})
 ARG_MIN_DURATION = (("-d", "--min-duration"), {})
 ARG_WAIT = (("-n", "--no-wait"), {"action": "store_false", "dest": "wait", "default": True, "help": "不等待任务完成直接退出"})
 ARG_SKIP_SCAN = (("-s", "--skip-scan"), {"action": "store_true", "help": "跳过扫描步骤"})
+ARG_SKIP_ENV_CHECK = (("--skip-env-check",), {"action": "store_true", "help": "跳过环境检查"})
 ARG_SERVER_ID = (("-s", "--server-id"), {})
 ARG_MAX_DURATION = (("-d", "--max-duration"), {})
 ARG_CLAIM_TIMEOUT = (("-t", "--claim-timeout-minutes"), {})
@@ -76,7 +77,7 @@ COMMANDS = {
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE]),
-        ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN]),
+        ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN, ARG_SKIP_ENV_CHECK]),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT]),
         ("finish", client_finish, [ARG_MESSAGE]),
     ],
