@@ -144,7 +144,7 @@ def once(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = True
     publish_code = publish(ctx, args, logger, sync=False)
     if transcribe_code == 0 and publish_code == 0:
         return 0
-    return 1
+    return 2
 
 
 def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
@@ -197,11 +197,9 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 should_sync = True
                 continue
             if code == 1:
-                queue = ctx.queue(logger, sync=False)
-                server_id = ctx.server_id(args)
-                if not queue.find_claimed_task(server_id):
-                    logger.info("队列中无待处理任务，正在退出...")
-                    break
+                logger.info("队列中无待处理任务，正在退出...")
+                break
+            if code == 2:
                 had_failure = True
                 logger.warning("任务失败但状态已处理，%s 秒后继续运行", interval)
                 time.sleep(interval)
