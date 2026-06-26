@@ -69,7 +69,7 @@ class NetdiskSync:
     def _copy(self, source: Path, target: Path, force: bool, stats: SyncStats) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and not force:
-            self.logger.info("跳过已存在的网盘文件：%s", target)
+            self.logger.debug("跳过已存在的网盘文件：%s", target)
             stats.skipped += 1
             return
         shutil.copy2(source, target)
