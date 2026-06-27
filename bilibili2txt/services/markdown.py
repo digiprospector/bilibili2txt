@@ -45,8 +45,28 @@ def parse_transcript_filename(path: Path) -> TranscriptMetadata | None:
 def md_path_for(meta: TranscriptMetadata, markdown_root: Path, text_file: Path) -> Path:
     return markdown_root / meta.date_folder / text_file.with_suffix(".md").name
 
+def adjust_heading_levels(summary: str) -> str:
+    headings = re.findall(r"(?m)^(#+)[ \t]+", summary)
+    if not headings:
+        return summary
+
+    levels = [len(h) for h in headings]
+    highest_level = min(levels)
+    shift = 3 - highest_level
+    if shift == 0:
+        return summary
+
+    def replace_heading(match: re.Match) -> str:
+        hashes = match.group(1)
+        new_len = len(hashes) + shift
+        new_len = max(1, new_len)
+        return "#" * new_len + " "
+
+    return re.sub(r"(?m)^(#+)[ \t]+", replace_heading, summary)
+
 
 def build_markdown(meta: TranscriptMetadata, transcript: str, summary: str, ai_provider: str) -> str:
+    summary = adjust_heading_levels(summary)
     return f"""# {meta.title}
 
 - **UP主**: {meta.up_name}
@@ -77,6 +97,7 @@ def build_markdown(meta: TranscriptMetadata, transcript: str, summary: str, ai_p
 
 
 def replace_ai_summary(content: str, summary: str, ai_provider: str) -> str:
+    summary = adjust_heading_levels(summary)
     section = f"## AI总结\n\n> 本总结由 {ai_provider} 生成\n\n{summary}\n\n"
     pattern = re.compile(r"## AI总结\n\n.*?(?=## 视频文稿|$)", re.DOTALL)
     if pattern.search(content):
