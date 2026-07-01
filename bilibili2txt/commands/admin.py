@@ -389,3 +389,160 @@ def _task_from_video_arg(ctx: CommandContext, value: str, logger: logging.Logger
     info = service.get_video_detail(bvid=bvid, aid=aid)
     info.setdefault("aid", aid)
     return Task.from_bilibili_info(info)
+
+
+def status(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    try:
+        queue = ctx.queue(logger, sync=True)
+    except Exception as exc:
+        logger.warning("同步远程队列仓库失败，将使用本地缓存数据：%s", exc)
+        queue = ctx.queue(logger, sync=False)
+
+    pending_tasks: list[Task] = []
+    claimed_tasks: list[Task] = []
+    results_tasks: list[Task] = []
+    done_tasks: list[Task] = []
+    failed_tasks: list[Task] = []
+
+    if queue.pending_dir.exists():
+        for p in queue.pending_dir.glob("*.json"):
+            try:
+                pending_tasks.append(Task.from_file(p))
+            except Exception as e:
+                logger.warning("解析待处理任务文件失败 %s: %s", p, e)
+
+    if queue.claimed_dir.exists():
+        for p in queue.claimed_dir.rglob("*.json"):
+            try:
+                claimed_tasks.append(Task.from_file(p))
+            except Exception as e:
+                logger.warning("解析处理中任务文件失败 %s: %s", p, e)
+
+    if queue.results_dir.exists():
+        for p in queue.results_dir.rglob("task.json"):
+            try:
+                results_tasks.append(Task.from_file(p))
+            except Exception as e:
+                logger.warning("解析完成任务文件失败 %s: %s", p, e)
+
+    if queue.done_dir.exists():
+        for p in queue.done_dir.rglob("task.json"):
+            try:
+                done_tasks.append(Task.from_file(p))
+            except Exception as e:
+                logger.warning("解析已归档任务文件失败 %s: %s", p, e)
+
+    if queue.failed_dir.exists():
+        for p in queue.failed_dir.rglob("task.json"):
+            try:
+                failed_tasks.append(Task.from_file(p))
+            except Exception as e:
+                logger.warning("解析失败任务文件失败 %s: %s", p, e)
+
+    # Sort tasks chronologically by creation time
+    pending_tasks.sort(key=lambda t: t.created_at or "")
+    claimed_tasks.sort(key=lambda t: t.created_at or "")
+    results_tasks.sort(key=lambda t: t.created_at or "")
+    done_tasks.sort(key=lambda t: t.created_at or "")
+    failed_tasks.sort(key=lambda t: t.created_at or "")
+
+    limit = int(args.limit) if args.limit else 10
+
+    counts = {
+        "pending": len(pending_tasks),
+        "claimed": len(claimed_tasks),
+        "results": len(results_tasks),
+        "done": len(done_tasks),
+        "failed": len(failed_tasks),
+    }
+
+    # Print statistics summary table
+    print("+----------------------+-------+")
+    print("| 任务状态 (Status)    | 数量  |")
+    print("+----------------------+-------+")
+    for status_name, count in counts.items():
+        print(f"| {status_name:<20} | {count:>5} |")
+    print("+----------------------+-------+")
+
+    def format_duration(seconds: int) -> str:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        if h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def print_category_details(name: str, tasks: list[Task]):
+        print(f"\n=== {name.upper()} 任务详情 (显示前 {limit}/{len(tasks)} 条) ===")
+        if not tasks:
+            print("  (无)")
+            return
+        
+        for idx, task in enumerate(tasks[:limit], 1):
+            dur_str = format_duration(task.duration)
+            title_truncated = task.title[:30] + "..." if len(task.title) > 30 else task.title
+            
+            detail_suffix = ""
+            if name == "claimed":
+                detail_suffix = f" | Claimed by: {task.claimed_by or 'unknown'} at: {task.claimed_at or 'unknown'}"
+            elif name == "failed":
+                detail_suffix = f" | Failed by: {task.failed_by or 'unknown'} | Error: {task.last_error or 'none'}"
+                
+            print(f"  {idx}. [{task.bvid}] {title_truncated} ({dur_str}){detail_suffix}")
+            
+        if len(tasks) > limit:
+            print(f"  ... 还有 {len(tasks) - limit} 条任务未列出")
+
+    print_category_details("pending", pending_tasks)
+    print_category_details("claimed", claimed_tasks)
+    print_category_details("results", results_tasks)
+    print_category_details("done", done_tasks)
+    print_category_details("failed", failed_tasks)
+
+    # Print Recommended Commands
+    print("\n=== 推荐处理命令 (Recommended Commands) ===")
+    has_commands = False
+
+    if counts["pending"] > 0:
+        print("  * 有待处理的转写任务 (pending)：")
+        print("    可以使用以下命令认领并开始执行转写任务：")
+        print("    python b2t.py server once")
+        print("    python b2t.py server run --server-id <your_server_id>")
+        has_commands = True
+
+    if counts["claimed"] > 0:
+        print("  * 有正在转写中的任务 (claimed)：")
+        print("    如果某些任务超时未完成，可以使用以下命令释放其认领状态重新放入队列：")
+        print("    python b2t.py server release-claimed")
+        has_commands = True
+
+    if counts["results"] > 0:
+        print("  * 有已完成待收集的转写结果 (results)：")
+        print("    可以使用以下命令将结果收集并生成 Markdown 总结：")
+        print("    python b2t.py client collect")
+        print("    python b2t.py client render")
+        print("    python b2t.py client sync")
+        print("    或者一键运行完整流程：")
+        print("    python b2t.py client run")
+        has_commands = True
+
+    if counts["failed"] > 0:
+        print("  * 有失败的任务 (failed)：")
+        has_download_failure = any(
+            task.last_error and ("yt-dlp" in task.last_error.lower() or "download" in task.last_error.lower())
+            for task in failed_tasks
+        )
+        if has_download_failure:
+            print("    检测到部分任务因音频下载/提取错误失败，可在客户端执行以下命令进行音频准备与自动重试：")
+            print("    python b2t.py client prepare-audio")
+        print("    也可以使用以下命令手动重新提交指定失败的任务：")
+        for task in failed_tasks[:3]:
+            print(f"    python b2t.py client resubmit-missing --input queue/failed/{task.task_id}/task.json")
+        if len(failed_tasks) > 3:
+            print("    ...")
+        has_commands = True
+
+    if not has_commands:
+        print("  当前队列中没有需要处理的活跃任务。全部完成！")
+
+    return 0

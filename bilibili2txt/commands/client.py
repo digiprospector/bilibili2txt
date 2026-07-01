@@ -268,14 +268,28 @@ def resubmit_missing(ctx: CommandContext, args, logger: logging.Logger) -> int:
     queue = ctx.queue(logger)
     db = ctx.database()
 
-    input_dir = Path(args.input) if args.input else ctx.config.temp_dir / "missing_tasks"
-    files = _collect_json_files(input_dir)
+    excludes = set()
+    if getattr(args, "exclude", None):
+        for item in args.exclude:
+            for subitem in item.split(","):
+                val = subitem.strip()
+                if val:
+                    excludes.add(val)
+
+    if getattr(args, "failed", False):
+        input_dir = queue.failed_dir
+        files = _collect_json_files(input_dir, recursive=True)
+    else:
+        input_dir = Path(args.input) if args.input else ctx.config.temp_dir / "missing_tasks"
+        files = _collect_json_files(input_dir)
+
     if not files:
         logger.info("在 %s 中未找到任何丢失任务文件", input_dir)
         return 1
 
     succeeded = 0
     skipped = 0
+    queue_modified = False
     for path in files:
         try:
             task = Task.from_file(path)
@@ -283,9 +297,23 @@ def resubmit_missing(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.error("无效的丢失任务文件 %s: %s", path, exc)
             continue
 
+        if task.task_id in excludes or task.bvid in excludes:
+            logger.info("排除任务 %s", task.task_id)
+            continue
+
+        is_failed_task = _is_under(path, queue.failed_dir)
         existing = queue.task_is_pending_or_claimed(task.task_id)
         if existing:
             logger.info("跳过丢失任务 %s (已在排队或处理中: %s, 文件: %s)", task.task_id, existing, path)
+            if is_failed_task:
+                failed_task_dir = queue.failed_dir / task.task_id
+                if failed_task_dir.exists() and failed_task_dir.is_dir():
+                    try:
+                        shutil.rmtree(failed_task_dir)
+                        logger.info("已删除已在排队或处理中的失败任务残留目录: %s", failed_task_dir)
+                        queue_modified = True
+                    except Exception as e:
+                        logger.warning("删除失败任务残留目录 %s 失败: %s", failed_task_dir, e)
             skipped += 1
             continue
 
@@ -293,9 +321,19 @@ def resubmit_missing(ctx: CommandContext, args, logger: logging.Logger) -> int:
         queue.add_pending_task(task)
         db.upsert_task(task, path, "pending")
         logger.info("已重新提交丢失任务 %s", task.task_id)
+        if is_failed_task:
+            failed_task_dir = queue.failed_dir / task.task_id
+            if failed_task_dir.exists() and failed_task_dir.is_dir():
+                try:
+                    shutil.rmtree(failed_task_dir)
+                    logger.info("已删除重新提交的失败任务目录: %s", failed_task_dir)
+                except Exception as e:
+                    logger.warning("删除失败任务目录 %s 失败: %s", failed_task_dir, e)
         succeeded += 1
+        queue_modified = True
 
-    queue.commit_and_push(f"resubmit missing {succeeded} task(s)")
+    if queue_modified:
+        queue.commit_and_push(f"resubmit/cleanup missing {succeeded} task(s)")
     logger.info("重新提交丢失任务总结: 成功=%s 跳过=%s", succeeded, skipped)
     return 0
 
@@ -328,6 +366,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
             failed += 1
             continue
 
+        all_exist = True
         copied_any = False
         for transcript in transcript_files:
             target = save_dir / _final_transcript_name(task, transcript)
@@ -335,12 +374,13 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 logger.info("跳过已存在的文稿: %s", target)
                 skipped += 1
                 continue
+            all_exist = False
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(transcript, target)
             logger.info("已收集文稿: %s -> %s", transcript, target)
             copied_any = True
 
-        if copied_any or args.force:
+        if copied_any or all_exist or args.force:
             done_path = queue.collect_result_to_done(result_dir)
             if done_path.exists():
                 shutil.rmtree(done_path)
@@ -349,6 +389,28 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
             _delete_matching_missing(missing_dir, task, logger)
             _delete_matching_submitted(submitted_dir, task, logger)
             succeeded += 1
+
+    # Clean up any leftover done directories if the corresponding BVID already exists in data/save
+    if queue.done_dir.exists():
+        for done_task_dir in sorted(queue.done_dir.iterdir()):
+            if not done_task_dir.is_dir():
+                continue
+            task_id = done_task_dir.name
+            bvid = task_id
+            task_json_file = done_task_dir / "task.json"
+            if task_json_file.exists():
+                try:
+                    bvid = Task.from_file(task_json_file).bvid
+                except Exception:
+                    pass
+            already_collected = any(bvid in path.name for path in save_dir.glob(f"*{bvid}*"))
+            if already_collected:
+                logger.info("检测到已收集的文稿，自动清理已完成的残留目录: %s (BVID: %s)", done_task_dir, bvid)
+                try:
+                    shutil.rmtree(done_task_dir)
+                    succeeded += 1
+                except Exception as e:
+                    logger.warning("删除已完成残留目录 %s 失败: %s", done_task_dir, e)
 
     if succeeded:
         queue.commit_and_push(f"collect {succeeded} result(s)")

@@ -17,6 +17,7 @@ from .commands.admin import (
     migrate_main_db as admin_migrate_main_db,
     push_data as admin_push_data,
     resummarize as admin_resummarize,
+    status as admin_status,
     webdav_clean as admin_webdav_clean,
     webdav_upload as admin_webdav_upload,
 )
@@ -57,6 +58,8 @@ ARG_STOCK = (("-s", "--stock"), {"action": "store_true"})
 ARG_MODEL = (("-m", "--model"), {})
 ARG_SOURCE_DB = ("source_db", {})
 ARG_TARGET_DB = ("target_db", {})
+ARG_FAILED = (("--failed",), {"action": "store_true", "help": "重新提交 queue/failed 目录下的所有失败任务"})
+ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV 号或任务 ID，可指定多次或用逗号分隔"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
@@ -78,7 +81,7 @@ COMMANDS = {
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE]),
         ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN, ARG_SKIP_ENV_CHECK]),
-        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT]),
+        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
         ("finish", client_finish, [ARG_MESSAGE]),
     ],
     "server": [
@@ -90,6 +93,7 @@ COMMANDS = {
         ("release-claimed", server_release_claimed, _SERVER_ARGS),
     ],
     "admin": [
+        ("status", admin_status, [ARG_LIMIT]),
         ("check-missing", admin_check_missing, []),
         ("check-ai", admin_check_ai, [ARG_LIST, ARG_NAME, ARG_STOCK, ARG_MODEL]),
         ("fix-summaries", admin_fix_summaries, [ARG_LIMIT, ARG_BVID]),
@@ -203,6 +207,7 @@ COMMAND_HELPS = {
         "release-claimed": "释放队列中指定服务节点超时过期的被占用任务",
     },
     "admin": {
+        "status": "显示当前任务队列状态和推荐处理命令",
         "check-missing": "检查是否存在已分配但未成功转写或存在遗漏的任务",
         "check-ai": "运行 AI 服务可用性自检与可用模型/配额测试",
         "fix-summaries": "修复或重新生成本地总结失败的 Markdown 文本",
