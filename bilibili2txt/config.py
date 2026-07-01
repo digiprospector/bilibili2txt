@@ -119,13 +119,13 @@ class CommandContext:
         db.initialize()
         return db
 
-    def queue(self, logger: logging.Logger, *, sync: bool = True):
+    def queue(self, logger: logging.Logger, *, sync: bool = True, max_retries: int | None = 3):
         from .services.gitqueue import GitQueue
 
         q = GitQueue(self.config.queue_dir, logger)
         q.ensure_layout()
         if sync:
-            q.sync()
+            q.sync(max_retries=max_retries)
         return q
 
     def server_id(self, args) -> str:

@@ -53,7 +53,7 @@ class GitQueue:
     def repo(self) -> git.Repo:
         return open_repo(self.repo_dir, QueueError)
 
-    def sync(self) -> None:
+    def sync(self, max_retries: int | None = 3, retry_delay: int = 5) -> None:
         import time
         repo = self.repo()
         self.logger.info("同步队列仓库：%s", self.repo_dir)
@@ -66,18 +66,25 @@ class GitQueue:
         except Exception as exc:
             self.logger.warning("初始化清理队列仓库或配置 pull.rebase 失败：%s", exc)
 
-        max_retries = 3
-        retry_delay = 5
-        for attempt in range(1, max_retries + 1):
+        attempt = 0
+        current_delay = retry_delay
+        while True:
+            attempt += 1
             try:
                 origin = self._origin(repo)
                 origin.pull()
                 return
             except Exception as exc:
-                self.logger.warning(
-                    "拉取队列仓库失败（尝试 %s/%s）：%s",
-                    attempt, max_retries, exc
-                )
+                if max_retries is not None:
+                    self.logger.warning(
+                        "拉取队列仓库失败（尝试 %s/%s）：%s",
+                        attempt, max_retries, exc
+                    )
+                else:
+                    self.logger.warning(
+                        "拉取队列仓库失败（尝试 %s）：%s",
+                        attempt, exc
+                    )
                 # 2. 如果拉取失败（如分叉或冲突），则自动回滚并强制重置到远程最新状态
                 try:
                     self.logger.info("检测到拉取冲突或错误，正在尝试强制重置本地队列分支到 origin/main...")
@@ -92,8 +99,10 @@ class GitQueue:
                 except Exception as reset_exc:
                     self.logger.warning("自动重置队列仓库失败：%s", reset_exc)
 
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
+                if max_retries is None or attempt < max_retries:
+                    time.sleep(current_delay)
+                    if max_retries is None:
+                        current_delay = min(current_delay * 2, 60)
                 else:
                     raise QueueError(f"Failed to pull queue repo after {max_retries} attempts: {exc}") from exc
 

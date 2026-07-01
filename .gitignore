@@ -229,3 +229,6 @@ queue/
 .cursor/
 .codex/
 .clinerules
+
+# Reference projects
+kr-sc-srt/

@@ -587,7 +587,7 @@ def _wait_for_queue_completion(ctx: CommandContext, args, logger: logging.Logger
     timeout = int(ctx.config.get("client.wait_timeout_seconds", 0))
     start = time.time()
     while True:
-        queue.sync()
+        queue.sync(max_retries=None)
         pending_count = len(list(queue.pending_dir.glob("*.json"))) if queue.pending_dir.exists() else 0
         claimed_count = len(list(queue.claimed_dir.rglob("*.json"))) if queue.claimed_dir.exists() else 0
         logger.info("等待队列中: pending=%s claimed=%s", pending_count, claimed_count)

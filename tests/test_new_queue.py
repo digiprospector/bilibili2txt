@@ -95,3 +95,22 @@ def test_commit_and_push_reports_missing_origin(tmp_path: Path):
         assert "origin" in str(exc)
     else:
         raise AssertionError("Expected missing origin error")
+
+
+def test_sync_retry_limit(tmp_path: Path):
+    repo_dir = tmp_path / "queue"
+    repo_dir.mkdir()
+    git.Repo.init(repo_dir)
+    queue = GitQueue(repo_dir, logging.getLogger("test"))
+    queue.ensure_layout()
+
+    import time
+    start_time = time.time()
+    try:
+        queue.sync(max_retries=2, retry_delay=0.1)
+    except Exception as exc:
+        assert "Failed to pull queue repo after 2 attempts" in str(exc)
+        duration = time.time() - start_time
+        assert duration >= 0.1
+    else:
+        raise AssertionError("Expected sync failure with max_retries")
