@@ -72,7 +72,16 @@ class GitQueue:
             attempt += 1
             try:
                 origin = self._origin(repo)
-                origin.pull()
+                fetch_infos = origin.pull()
+                # 检查 FetchInfo 结果：gitpython 有时在网络故障时不抛异常
+                # 但会返回带有 ERROR flag 的 FetchInfo 对象
+                error_flags = getattr(git.FetchInfo, "ERROR", 0x100)
+                failed = [fi for fi in (fetch_infos or []) if fi.flags & error_flags]
+                if failed:
+                    raise QueueError(
+                        f"Pull returned error flags for refs: "
+                        f"{[fi.ref for fi in failed]}"
+                    )
                 return
             except Exception as exc:
                 if max_retries is not None:

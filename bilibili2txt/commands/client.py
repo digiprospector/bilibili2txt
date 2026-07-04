@@ -557,7 +557,7 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
         queue = GitQueue(ctx.config.queue_dir, logger)
         queue.ensure_layout()
         logger.info("正在对 %s 执行 git pull (sync)...", ctx.config.queue_dir)
-        queue.sync()
+        queue.sync(max_retries=1)
         logger.info("Git Pull 测试通过。")
     except Exception as e:
         logger.error("Git Pull 测试遇到异常: %s", e)
