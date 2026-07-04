@@ -33,17 +33,16 @@ def parse_srt_time(t_str: str) -> int:
 
 
 def format_srt_time(ms: int) -> str:
-    s, m = divmod(ms // 1000, 60)
-    h, m = divmod(s, 60)
-    return f"{h:02d}:{m:02d}:{s%60:02d},{ms%1000:03d}"
+    s, ms_part = divmod(ms, 1000)
+    m, s_part = divmod(s, 60)
+    h, m_part = divmod(m, 60)
+    return f"{h:02d}:{m_part:02d}:{s_part:02d},{ms_part:03d}"
 
 
 def format_txt_time(ms: int) -> str:
-    s, m = divmod(ms // 1000, 60)
-    h, m = divmod(s, 60)
-    ms_part = ms % 1000
-    s_part = s % 60
-    m_part = m % 60
+    s, ms_part = divmod(ms, 1000)
+    m, s_part = divmod(s, 60)
+    h, m_part = divmod(m, 60)
     if h > 0:
         return f"{h:02d}:{m_part:02d}:{s_part:02d}.{ms_part:03d}"
     else:
@@ -174,10 +173,10 @@ class Transcriber:
         self.funasr_config = funasr_config or {}
 
         # FunASR parameters
-        self.drive_model_path = self.funasr_config.get("drive_model_path", "/content/drive/MyDrive/Funasr-Models")
-        self.asr_model = self.funasr_config.get("asr_model", "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8449-pytorch")
+        self.drive_model_path = self.funasr_config.get("drive_model_path", "/content/drive/MyDrive/modelscope_cache")
+        self.asr_model = self.funasr_config.get("asr_model", "speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
         self.vad_model = self.funasr_config.get("vad_model", "speech_fsmn_vad_zh-cn-16k-common-pytorch")
-        self.punc_model = self.funasr_config.get("punc_model", "punc_ct-transformer_zh-cn-common-vocab272727-pytorch")
+        self.punc_model = self.funasr_config.get("punc_model", "punc_ct-transformer_cn-en-common-vocab471067-large")
 
     def _resolve_model_path(self, model_name: str) -> str:
         if not model_name:

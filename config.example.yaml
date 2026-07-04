@@ -39,10 +39,10 @@ server:
   claim_timeout_minutes: 180
   max_tasks: 0
   funasr:
-    drive_model_path: /content/drive/MyDrive/Funasr-Models
-    asr_model: speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8449-pytorch
+    drive_model_path: /content/drive/MyDrive/modelscope_cache
+    asr_model: speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch
     vad_model: speech_fsmn_vad_zh-cn-16k-common-pytorch
-    punc_model: punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+    punc_model: punc_ct-transformer_cn-en-common-vocab471067-large
 
 ai:
   selected: example
