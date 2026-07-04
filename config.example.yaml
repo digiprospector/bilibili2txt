@@ -33,10 +33,16 @@ client:
 
 server:
   server_id: colab-a
+  engine: funasr  # funasr or whisper
   faster_whisper_path: /content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl
   max_duration_seconds: 864000
   claim_timeout_minutes: 180
   max_tasks: 0
+  funasr:
+    drive_model_path: /content/drive/MyDrive/Funasr-Models
+    asr_model: speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8449-pytorch
+    vad_model: speech_fsmn_vad_zh-cn-16k-common-pytorch
+    punc_model: punc_ct-transformer_zh-cn-common-vocab272727-pytorch
 
 ai:
   selected: example

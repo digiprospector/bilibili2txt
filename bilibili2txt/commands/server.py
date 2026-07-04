@@ -61,7 +61,25 @@ def transcribe(ctx: CommandContext, args, logger: logging.Logger) -> int:
     try:
         audio = AudioService(ctx.config, logger)
         audio_files = audio.get_audio_files_for_server(task)
-        transcriber = Transcriber(ctx.config.path("server.faster_whisper_path"), ctx.config.temp_dir, logger)
+        # Resolve faster_whisper_path gracefully
+        faster_whisper_path = None
+        try:
+            faster_whisper_path = ctx.config.path("server.faster_whisper_path")
+        except Exception:
+            pass
+        if not faster_whisper_path:
+            faster_whisper_path = ctx.config.temp_dir / "dummy_whisper"
+
+        engine = ctx.config.get("server.engine", "funasr")
+        funasr_config = ctx.config.get("server.funasr", {})
+
+        transcriber = Transcriber(
+            faster_whisper_path,
+            ctx.config.temp_dir,
+            logger,
+            engine=engine,
+            funasr_config=funasr_config
+        )
         result_dir = transcriber.transcribe_audio_files(task, audio_files)
         logger.info("转写结果已就绪：%s", result_dir)
         return 0

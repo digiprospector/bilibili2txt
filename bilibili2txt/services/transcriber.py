@@ -38,6 +38,18 @@ def format_srt_time(ms: int) -> str:
     return f"{h:02d}:{m:02d}:{s%60:02d},{ms%1000:03d}"
 
 
+def format_txt_time(ms: int) -> str:
+    s, m = divmod(ms // 1000, 60)
+    h, m = divmod(s, 60)
+    ms_part = ms % 1000
+    s_part = s % 60
+    m_part = m % 60
+    if h > 0:
+        return f"{h:02d}:{m_part:02d}:{s_part:02d}.{ms_part:03d}"
+    else:
+        return f"{m_part:02d}:{s_part:02d}.{ms_part:03d}"
+
+
 def parse_srt(content: str) -> list[Cue]:
     blocks = content.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n\n")
     cues = []
@@ -146,16 +158,40 @@ def cut_audio(source: Path, target: Path, start_s: float, end_s: float) -> None:
 
 
 class Transcriber:
-    def __init__(self, faster_whisper_path: Path, temp_dir: Path, logger: logging.Logger):
+    def __init__(
+        self,
+        faster_whisper_path: Path,
+        temp_dir: Path,
+        logger: logging.Logger,
+        *,
+        engine: str = "whisper",
+        funasr_config: dict | None = None
+    ):
         self.faster_whisper_path = faster_whisper_path
         self.temp_dir = temp_dir
         self.logger = logger
+        self.engine = engine
+        self.funasr_config = funasr_config or {}
+
+        # FunASR parameters
+        self.drive_model_path = self.funasr_config.get("drive_model_path", "/content/drive/MyDrive/Funasr-Models")
+        self.asr_model = self.funasr_config.get("asr_model", "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8449-pytorch")
+        self.vad_model = self.funasr_config.get("vad_model", "speech_fsmn_vad_zh-cn-16k-common-pytorch")
+        self.punc_model = self.funasr_config.get("punc_model", "punc_ct-transformer_zh-cn-common-vocab272727-pytorch")
+
+    def _resolve_model_path(self, model_name: str) -> str:
+        if not model_name:
+            return ""
+        if model_name.startswith("/") or ":" in model_name:
+            return model_name
+        return f"{self.drive_model_path}/iic/{model_name}"
 
     def transcribe_audio_files(self, task: Task, audio_files: list[Path]) -> Path:
         if not audio_files:
             raise TranscriptionError("no audio files available")
-        if not self.faster_whisper_path.exists():
-            raise TranscriptionError(f"faster-whisper path does not exist: {self.faster_whisper_path}")
+        if self.engine == "whisper":
+            if not self.faster_whisper_path.exists():
+                raise TranscriptionError(f"faster-whisper path does not exist: {self.faster_whisper_path}")
 
         result_dir = self.temp_dir / "server_results" / task.task_id
         if result_dir.exists():
@@ -296,6 +332,12 @@ class Transcriber:
         self.logger.info("已生成合并后的文本文件：%s", output_path)
 
     def _transcribe_one(self, audio_file: Path) -> None:
+        if self.engine == "funasr":
+            self._transcribe_one_funasr(audio_file)
+        else:
+            self._transcribe_one_whisper(audio_file)
+
+    def _transcribe_one_whisper(self, audio_file: Path) -> None:
         self.logger.info("运行 faster-whisper：%s", audio_file)
         command = [
             str(self.faster_whisper_path),
@@ -319,5 +361,87 @@ class Transcriber:
             "text",
         ]
         subprocess.run(command, check=True)
+
+    def _get_funasr_model(self):
+        if not hasattr(self, "_funasr_model"):
+            import os
+            from funasr import AutoModel
+            
+            os.environ['MODELSCOPE_CACHE'] = str(self.drive_model_path)
+            os.environ['MODELSCOPE_DISABLE_REMOTE'] = "1"
+            
+            asr_path = self._resolve_model_path(self.asr_model)
+            vad_path = self._resolve_model_path(self.vad_model)
+            punc_path = self._resolve_model_path(self.punc_model)
+            
+            self.logger.info("初始化 FunASR 模型，缓存目录：%s", self.drive_model_path)
+            self.logger.info("ASR 模型路径: %s", asr_path)
+            self.logger.info("VAD 模型路径: %s", vad_path)
+            self.logger.info("Punc 模型路径: %s", punc_path)
+            
+            self._funasr_model = AutoModel(
+                disable_pbar=True,
+                disable_update=True,
+                model=asr_path,
+                vad_model=vad_path,
+                vad_kwargs={"max_single_segment_time": 30000},
+                punc_model=punc_path,
+            )
+        return self._funasr_model
+
+    def _transcribe_one_funasr(self, audio_file: Path) -> None:
+        self.logger.info("运行 FunASR 识别：%s", audio_file)
+        model = self._get_funasr_model()
+        
+        res = model.generate(
+            input=str(audio_file),
+            batch_size_s=300,
+            return_sentence=True
+        )
+        
+        if not res:
+            raise TranscriptionError("FunASR 识别返回空结果")
+            
+        sentence_info = res[0].get("sentence_info", [])
+        
+        # 如果 sentence_info 为空但有文本，则退化为单段识别
+        if not sentence_info and res[0].get("text"):
+            sentence_info = [{
+                "text": res[0]["text"],
+                "start": 0,
+                "end": int(probe_duration_s(audio_file) * 1000)
+            }]
+            
+        # 1. 写入 .text 文件（纯文本，每行一句）
+        text_lines = [seg.get("text", "").strip() for seg in sentence_info]
+        text_lines = [line for line in text_lines if line]
+        text_content = "\n".join(text_lines)
+        audio_file.with_suffix(".text").write_text(text_content, encoding="utf-8")
+        
+        # 2. 写入 .txt 文件（带时间戳标记：[MM:SS.mmm --> MM:SS.mmm]  文本）
+        txt_lines = []
+        for seg in sentence_info:
+            start_ms = int(seg.get("start", 0))
+            end_ms = int(seg.get("end", 0))
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            start_str = format_txt_time(start_ms)
+            end_str = format_txt_time(end_ms)
+            txt_lines.append(f"[{start_str} --> {end_str}]  {text}")
+        txt_content = "\n".join(txt_lines)
+        audio_file.with_suffix(".txt").write_text(txt_content, encoding="utf-8")
+        
+        # 3. 写入 .srt 文件（标准 SRT 格式）
+        cues = []
+        for idx, seg in enumerate(sentence_info, start=1):
+            start_ms = int(seg.get("start", 0))
+            end_ms = int(seg.get("end", 0))
+            text = seg.get("text", "").strip()
+            cues.append(Cue(index=idx, start_ms=start_ms, end_ms=end_ms, text=text))
+        srt_content = render_srt(cues)
+        audio_file.with_suffix(".srt").write_text(srt_content, encoding="utf-8")
+        
+        self.logger.info("FunASR 识别完成，已成功生成 .text, .txt, .srt 文件")
 
 
