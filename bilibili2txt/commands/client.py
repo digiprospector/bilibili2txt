@@ -63,6 +63,100 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0
 
 
+def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    bvid = args.bvid.strip()
+    if not bvid:
+        logger.error("必须提供 BVID")
+        return 1
+
+    db = ctx.database()
+    service = BilibiliService(ctx.config, logger)
+
+    if not service.login():
+        logger.error("Bilibili 登录失败")
+        return 1
+
+    # --- Phase 1: scan (fetch video detail and create task) ---
+    logger.info("====== add: scan %s ======", bvid)
+    scrape_duration_max = int(ctx.config.get("bilibili.scrape_duration_max", 7200))
+    output_dir = ctx.config.temp_dir / "tasks"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        info = service.get_video_detail(bvid=bvid)
+    except Exception as exc:
+        logger.error("获取视频详情失败 %s: %s", bvid, exc)
+        return 1
+
+    task = Task.from_bilibili_info(info)
+    if task.duration > scrape_duration_max:
+        task.status = "too_long"
+
+    for old_file in output_dir.glob(f"*_{bvid}.json"):
+        try:
+            old_file.unlink()
+            logger.info("已删除 %s 的旧任务文件: %s", bvid, old_file)
+        except Exception as e:
+            logger.warning("删除旧任务文件 %s 失败: %s", old_file, e)
+
+    task_path = output_dir / task.filename
+    task.write_json(task_path)
+    db.upsert_video(task)
+    db.upsert_task(task, task_path, "local")
+    logger.info("已创建任务: %s status=%s duration=%s", task.task_id, task.status, task.duration)
+
+    if task.status != "normal":
+        logger.warning("任务状态为 %s，跳过后续提交和音频准备", task.status)
+        return 0
+
+    # --- Phase 2: submit (add to git queue) ---
+    logger.info("====== add: submit %s ======", bvid)
+    queue = ctx.queue(logger)
+    submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
+    submitted_dir.mkdir(parents=True, exist_ok=True)
+
+    if queue.task_exists(task.task_id):
+        logger.info("任务已存在于队列中，跳过提交: %s", task.task_id)
+    else:
+        queue.add_pending_task(task)
+        db.upsert_task(task, task_path, "submitted")
+        db.mark_task_submitted(task.task_id)
+        shutil.move(str(task_path), str(submitted_dir / task_path.name))
+        queue.commit_and_push(f"add {task.task_id}")
+        logger.info("已提交任务: %s", task.task_id)
+
+    # --- Phase 3: prepare-audio (download and upload audio) ---
+    logger.info("====== add: prepare-audio %s ======", bvid)
+    audio = AudioService(ctx.config, logger)
+    webdav = WebDavClient.from_config(ctx.config, logger)
+    remote_files = webdav.list_files()
+
+    audio_on_webdav = False
+    if f"{task.bvid}.mp3" in remote_files:
+        audio_on_webdav = True
+    else:
+        for rf in remote_files:
+            if rf.startswith(f"{task.bvid}_") and rf.endswith(".mp3"):
+                audio_on_webdav = True
+                break
+
+    if audio_on_webdav:
+        logger.info("音频已在 WebDAV 上存在，跳过下载: %s", task.bvid)
+    else:
+        try:
+            audio_files = audio.download_task_audio(task)
+            if not audio.upload_task_audio(task, audio_files):
+                logger.error("上传音频失败: %s", task.task_id)
+                return 1
+            logger.info("音频准备完成: %s", task.task_id)
+        except Exception as exc:
+            logger.exception("为 %s 准备音频失败: %s", task.task_id, exc)
+            return 1
+
+    logger.info("====== add 完成: %s ======", bvid)
+    return 0
+
+
 def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
     queue = ctx.queue(logger)
     db = ctx.database()

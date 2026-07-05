@@ -108,12 +108,28 @@ python b2t.py init queue
 Client 本地流程：
 
 ```bash
+# 扫描关注的 UP 主
 python b2t.py client scan
+
+# 手动直接添加单个视频（扫描、提交、准备音频一步完成）
+python b2t.py client add BVxxxx
+
+# 提取视频音频并上传至共享 WebDAV 网盘
 python b2t.py client prepare-audio
+
+# 将新视频打包成转写任务提交到 Git 任务队列中
 python b2t.py client submit
+
+# 从任务队列拉取已转写完成的 JSON 结果
 python b2t.py client collect
+
+# 将收集到的转写结果渲染并调用 AI 生成 Markdown 总结
 python b2t.py client render
+
+# 同步生成的 Markdown 总结
 python b2t.py client sync
+
+# 提交并推送本地 data 数据仓库中的所有更改
 python b2t.py client finish
 ```
 

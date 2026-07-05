@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import CommandContext, ConfigError, load_config
 from .commands.init import data as init_data, queue as init_queue, InitError
-from .commands.client import collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
+from .commands.client import add as client_add, collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
 from .commands.admin import (
     check_ai as admin_check_ai,
     check_missing as admin_check_missing,
@@ -45,6 +45,7 @@ ARG_KEEP_LOCAL = (("-k", "--keep-local-result"), {"action": "store_true"})
 ARG_MAX_TASKS = (("-m", "--max-tasks"), {})
 ARG_INTERVAL = (("-i", "--interval"), {})
 ARG_VIDEO = ("video", {})
+ARG_BVID_POS = ("bvid", {"help": "视频的 BV 号"})
 ARG_MESSAGE = (("-m", "--message"), {})
 ARG_DRY_RUN = (("-d", "--dry-run"), {"action": "store_true"})
 ARG_FILE = ("file", {})
@@ -77,6 +78,7 @@ COMMANDS = {
         ("scan", client_scan, _SCAN_ARGS),
         ("submit", client_submit, [ARG_INPUT]),
         ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION]),
+        ("add", client_add, [ARG_BVID_POS]),
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE]),
@@ -191,6 +193,7 @@ COMMAND_HELPS = {
         "scan": "扫描关注的 UP 主，检查是否有新发布的视频",
         "submit": "将新视频打包成转写任务提交到 Git 任务队列中",
         "prepare-audio": "提取视频音频并上传至共享 WebDAV 网盘",
+        "add": "通过 BV 号直接添加单个视频（扫描+提交+准备音频一步完成）",
         "collect": "从任务队列拉取已转写完成的 JSON 结果",
         "render": "将收集到的转写结果渲染并调用 AI 生成 Markdown 总结",
         "sync": "将生成的 Markdown 总结同步至网盘或指定归档目录",
