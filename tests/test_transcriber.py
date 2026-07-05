@@ -135,3 +135,41 @@ def test_split_audio_planning(tmp_path, monkeypatch):
     assert chunks[0][1] == 0.0
     assert chunks[1][1] == 1700.0
     assert chunks[2][1] == 3501.0
+
+
+def test_split_into_sentences():
+    from bilibili2txt.services.transcriber import split_into_sentences
+
+    # Test 1: splitting without timestamps
+    text = "欢迎大家。我们开始直播。"
+    segs = split_into_sentences(text, 0, 10000)
+    assert len(segs) == 2
+    assert segs[0]["text"] == "欢迎大家。"
+    assert segs[0]["start"] == 0
+    assert segs[0]["end"] == 4166
+    assert segs[1]["text"] == "我们开始直播。"
+    assert segs[1]["start"] == 4166
+    assert segs[1]["end"] == 10000
+
+    # Test 2: splitting with character timestamps
+    text_with_ts = "欢迎大家。我们开始。"
+    # 8 non-punctuation/non-space characters
+    # '欢', '迎', '大', '家', '我', '们', '开', '始'
+    char_timestamps = [
+        [100, 200],   # 欢
+        [200, 300],   # 迎
+        [300, 400],   # 大
+        [400, 550],   # 家
+        [1000, 1100], # 我
+        [1100, 1200], # 们
+        [1200, 1300], # 开
+        [1300, 1400], # 始
+    ]
+    segs_ts = split_into_sentences(text_with_ts, 0, 2000, char_timestamps)
+    assert len(segs_ts) == 2
+    assert segs_ts[0]["text"] == "欢迎大家。"
+    assert segs_ts[0]["start"] == 100
+    assert segs_ts[0]["end"] == 550
+    assert segs_ts[1]["text"] == "我们开始。"
+    assert segs_ts[1]["start"] == 1000
+    assert segs_ts[1]["end"] == 1400

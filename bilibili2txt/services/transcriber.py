@@ -156,6 +156,95 @@ def cut_audio(source: Path, target: Path, start_s: float, end_s: float) -> None:
         subprocess.run(fallback_command, check=True)
 
 
+def split_into_sentences(
+    text: str,
+    start_ms: int,
+    end_ms: int,
+    char_timestamps: list[list[int]] | None = None
+) -> list[dict]:
+    delimiters = {'。', '？', '！', '；', '\n'}
+    segments = []
+    
+    ts_idx = 0
+    char_times = []
+    for char in text:
+        if (
+            char_timestamps and 
+            ts_idx < len(char_timestamps) and 
+            not char.isspace() and 
+            char not in delimiters and 
+            char not in {'，', ',', '.', '?', '!', ';', ':'}
+        ):
+            char_times.append(char_timestamps[ts_idx])
+            ts_idx += 1
+        else:
+            char_times.append(None)
+            
+    current_sentence = []
+    current_times = []
+    
+    def add_current():
+        if not current_sentence:
+            return
+        s_text = "".join(current_sentence).strip()
+        if not s_text:
+            return
+        valid_times = [t for t in current_times if t is not None]
+        if valid_times:
+            s_start = valid_times[0][0]
+            s_end = valid_times[-1][1]
+        else:
+            s_start = start_ms
+            s_end = end_ms
+        segments.append({
+            "text": s_text,
+            "start": s_start,
+            "end": s_end
+        })
+        current_sentence.clear()
+        current_times.clear()
+
+    for idx, char in enumerate(text):
+        current_sentence.append(char)
+        current_times.append(char_times[idx])
+        
+        is_delimiter = char in delimiters
+        is_long_comma = (char == '，' or char == ',') and len(current_sentence) > 30
+        
+        if is_delimiter or is_long_comma:
+            add_current()
+            
+    add_current()
+    
+    if len(segments) > 1:
+        needs_proportion = False
+        if not char_timestamps:
+            needs_proportion = True
+        else:
+            starts = {seg["start"] for seg in segments}
+            ends = {seg["end"] for seg in segments}
+            if len(starts) == 1 and len(ends) == 1:
+                needs_proportion = True
+                
+        if needs_proportion:
+            total_chars = sum(len(seg["text"]) for seg in segments)
+            if total_chars > 0:
+                current_ms = start_ms
+                duration = end_ms - start_ms
+                for idx, seg in enumerate(segments):
+                    seg_len = len(seg["text"])
+                    if idx == len(segments) - 1:
+                        seg["start"] = current_ms
+                        seg["end"] = end_ms
+                    else:
+                        seg_dur = int(duration * (seg_len / total_chars))
+                        seg["start"] = current_ms
+                        seg["end"] = current_ms + seg_dur
+                        current_ms = seg["end"]
+                        
+    return segments
+
+
 class Transcriber:
     def __init__(
         self,
@@ -410,6 +499,25 @@ class Transcriber:
                 "start": 0,
                 "end": int(probe_duration_s(audio_file) * 1000)
             }]
+            
+        # 对 sentence_info 中的每一段进行更细粒度的标点符号切分
+        char_timestamps = res[0].get("timestamp")
+        refined_sentence_info = []
+        for seg in sentence_info:
+            text = seg.get("text", "").strip()
+            start = seg.get("start", 0)
+            end = seg.get("end", 0)
+            
+            has_delimiters = any(d in text for d in {'。', '？', '！', '；', '\n'})
+            if has_delimiters or (end - start > 30000):
+                seg_ts = None
+                if char_timestamps:
+                    seg_ts = [ts for ts in char_timestamps if start <= ts[0] <= end]
+                sub_segs = split_into_sentences(text, start, end, seg_ts)
+                refined_sentence_info.extend(sub_segs)
+            else:
+                refined_sentence_info.append(seg)
+        sentence_info = refined_sentence_info
             
         # 1. 写入 .text 文件（纯文本，每行一句）
         text_lines = [seg.get("text", "").strip() for seg in sentence_info]
