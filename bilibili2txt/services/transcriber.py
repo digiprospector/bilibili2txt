@@ -49,6 +49,19 @@ def format_txt_time(ms: int) -> str:
         return f"{m_part:02d}:{s_part:02d}.{ms_part:03d}"
 
 
+def parse_txt_time(t_str: str) -> int:
+    t_str = t_str.strip()
+    parts = t_str.split(".")
+    ms = int(parts[1]) if len(parts) > 1 else 0
+    time_parts = parts[0].split(":")
+    if len(time_parts) == 3:
+        h, m, s = int(time_parts[0]), int(time_parts[1]), int(time_parts[2])
+    else:
+        h = 0
+        m, s = int(time_parts[0]), int(time_parts[1])
+    return ((h * 3600 + m * 60 + s) * 1000) + ms
+
+
 def parse_srt(content: str) -> list[Cue]:
     blocks = content.replace("\r\n", "\n").replace("\r", "\n").strip().split("\n\n")
     cues = []
@@ -312,7 +325,7 @@ class Transcriber:
                         self._transcribe_one(chunk_file)
 
                     chunk_srts.append((chunk_srt, start_s))
-                    chunk_txts.append(chunk_txt)
+                    chunk_txts.append((chunk_txt, start_s))
                     chunk_texts.append(chunk_text)
 
                 merged_srt_path = result_dir / f"transcript{part_suffix}.srt"
@@ -320,7 +333,7 @@ class Transcriber:
                 merged_text_path = result_dir / f"transcript{part_suffix}.text"
 
                 self._merge_srts(chunk_srts, merged_srt_path)
-                self._merge_txts(chunk_txts, merged_txt_path)
+                self._merge_txt_with_offset(chunk_txts, merged_txt_path)
                 self._merge_txts(chunk_texts, merged_text_path)
             else:
                 self.logger.info("直接识别完整音频文件：%s", audio_file.name)
@@ -418,6 +431,31 @@ class Transcriber:
         
         output_path.write_text("\n\n".join(txt_contents), encoding="utf-8")
         self.logger.info("已生成合并后的文本文件：%s", output_path)
+
+    def _merge_txt_with_offset(self, chunk_txts: list[tuple[Path, float]], output_path: Path) -> None:
+        import re
+        pattern = re.compile(r"\[([^\]]+?)\s*-->\s*([^\]]+?)\]")
+        all_lines = []
+        for txt_path, start_s in chunk_txts:
+            if not txt_path.exists():
+                continue
+            offset_ms = int(start_s * 1000)
+            content = txt_path.read_text(encoding="utf-8", errors="ignore").strip()
+            for line in content.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                match = pattern.match(line)
+                if match and offset_ms > 0:
+                    old_start = parse_txt_time(match.group(1))
+                    old_end = parse_txt_time(match.group(2))
+                    new_start = format_txt_time(old_start + offset_ms)
+                    new_end = format_txt_time(old_end + offset_ms)
+                    rest = line[match.end():]
+                    line = f"[{new_start} --> {new_end}]{rest}"
+                all_lines.append(line)
+        output_path.write_text("\n".join(all_lines), encoding="utf-8")
+        self.logger.info("已生成合并后的带时间戳文本文件：%s", output_path)
 
     def _transcribe_one(self, audio_file: Path) -> None:
         if self.engine == "funasr":
