@@ -32,6 +32,7 @@ def test_client_commands_match_public_contract():
         "scan",
         "submit",
         "prepare-audio",
+        "add",
         "collect",
         "render",
         "sync",

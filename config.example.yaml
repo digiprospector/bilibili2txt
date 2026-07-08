@@ -30,6 +30,10 @@ client:
   netdisk_dir: D:/Netdisk
   wait_interval_seconds: 60
   wait_timeout_seconds: 0
+  dingtalk:
+    enabled: false
+    webhook: "https://oapi.dingtalk.com/robot/send?access_token=your_access_token"
+    secret: "your_secret_here"  # Optional, if set it uses signature verification
 
 server:
   server_id: colab-a

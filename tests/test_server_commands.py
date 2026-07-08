@@ -106,6 +106,9 @@ def test_once_returns_2_on_failure(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("bilibili2txt.commands.server.transcribe", lambda *a, **k: 1)
     # Mock publish to return 1
     monkeypatch.setattr("bilibili2txt.commands.server.publish", lambda *a, **k: 1)
+    # Mock GitQueue operations
+    monkeypatch.setattr(GitQueue, "commit_and_push", lambda *a, **kw: None)
+    monkeypatch.setattr(GitQueue, "sync", lambda *a, **kw: None)
 
     args = Namespace(server_id="test-server", max_duration=864000)
     code = server_commands.once(ctx, args, logging.getLogger("test"), sync=False)
@@ -127,6 +130,9 @@ def test_run_continues_on_once_returning_2(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("bilibili2txt.commands.server.release_claimed", lambda *a, **k: 0)
     monkeypatch.setattr("bilibili2txt.commands.server.publish", lambda *a, **k: 1)
     monkeypatch.setattr("time.sleep", lambda seconds: None)  # avoid sleeping in tests
+    # Mock GitQueue operations
+    monkeypatch.setattr(GitQueue, "commit_and_push", lambda *a, **kw: None)
+    monkeypatch.setattr(GitQueue, "sync", lambda *a, **kw: None)
 
     args = Namespace(
         server_id="test-server",

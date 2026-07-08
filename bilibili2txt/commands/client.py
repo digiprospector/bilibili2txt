@@ -60,6 +60,7 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
         created += 1
 
     logger.info("扫描总结: 已创建=%s 已跳过=%s", created, skipped)
+    ctx.extra["scan_stats"] = {"created": created, "skipped": skipped}
     return 0
 
 
@@ -168,6 +169,7 @@ def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
     files = _collect_json_files(input_dir)
     if not files:
         logger.info("在 %s 中未找到任何任务文件", input_dir)
+        ctx.extra["submit_stats"] = {"succeeded": 0, "skipped": 0, "failed": 0}
         return 0
 
     succeeded = 0
@@ -215,6 +217,7 @@ def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     queue.commit_and_push(f"submit {succeeded} task(s)")
     logger.info("提交总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+    ctx.extra["submit_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
     return 0 if failed == 0 else 1
 
 
@@ -253,6 +256,7 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     if not files:
         logger.info("未找到用于 prepare-audio 的任何任务文件")
+        ctx.extra["prepare_stats"] = {"succeeded": 0, "skipped": 0, "failed": 0}
         return 0
 
     succeeded = 0
@@ -355,6 +359,7 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.error("提交队列修改失败: %s", exc)
 
     logger.info("准备音频总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+    ctx.extra["prepare_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
     return 0 if failed == 0 else 1
 
 
@@ -509,6 +514,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
     if succeeded:
         queue.commit_and_push(f"collect {succeeded} result(s)")
     logger.info("收集总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+    ctx.extra["collect_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
     return 0 if failed == 0 else 1
 
 
@@ -524,6 +530,7 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
         text_files = [path for path in text_files if args.bvid in path.name]
     if not text_files:
         logger.info("在 %s 中未找到任何可渲染的 .text 文件", save_dir)
+        ctx.extra["render_stats"] = {"succeeded": 0, "skipped": 0, "failed": 0}
         return 1
 
     succeeded = 0
@@ -563,6 +570,7 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
             continue
 
     logger.info("渲染总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+    ctx.extra["render_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
     return 0 if failed == 0 else 1
 
 
@@ -576,6 +584,12 @@ def sync(ctx: CommandContext, args, logger: logging.Logger) -> int:
         stats.conflicts,
         stats.archived,
     )
+    ctx.extra["sync_stats"] = {
+        "copied": stats.copied,
+        "skipped": stats.skipped,
+        "conflicts": stats.conflicts,
+        "archived": stats.archived,
+    }
     return 0
 
 
@@ -663,78 +677,188 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
 
 def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
     logger.info("客户端运行启动")
+    start_time = time.time()
 
-    if not getattr(args, "skip_env_check", False):
-        if not env_check(ctx, logger):
-            logger.error("环境检查未通过，终止运行。")
-            return 1
-        logger.info("环境检查通过，继续执行客户端流程。")
-    else:
-        logger.info("已设置 --skip-env-check，跳过环境检查")
-    if getattr(args, "skip_scan", False):
-        logger.info("已设置 --skip-scan，跳过扫描步骤")
-        scan_code = 0
-    else:
-        logger.info("====== scan ======")
-        scan_code = scan(ctx, args, logger)
-        if scan_code != 0:
-            logger.info("扫描未产生可运行的任务，或扫描失败。代码=%s", scan_code)
-            return scan_code
+    def _finish_run(code: int, error_msg: str | None = None) -> int:
+        duration = time.time() - start_time
+        if duration >= 60:
+            duration_str = f"{int(duration // 60)}m {int(duration % 60)}s"
+        else:
+            duration_str = f"{duration:.1f}s"
+        _send_dingtalk_run_notification(ctx, logger, success=(code == 0), duration_str=duration_str, error_msg=error_msg)
+        return code
 
-    logger.info("====== prepare-audio ======")
-    prepare_code = prepare_audio(ctx, args, logger)
-    if prepare_code != 0:
-        logger.warning("prepare-audio 返回代码=%s；继续提交因为服务端自身也可以下载", prepare_code)
-
-    logger.info("====== submit ======")
-    submit_code = submit(ctx, args, logger)
-    if submit_code != 0:
-        return submit_code
-
-    if not args.wait:
-        return 0
-
-    logger.info("=== 开始执行 chrome_bookmark_manager ===")
     try:
-        import sys
-        _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-        if str(_bookmark_dir) not in sys.path:
-            sys.path.insert(0, str(_bookmark_dir))
-        from chrome_bookmark_manager import manage_chrome
-        manage_chrome('open', logger)
-    except Exception as e:
-        logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
-    logger.info("=== chrome_bookmark_manager 执行完成 ===")
+        if not getattr(args, "skip_env_check", False):
+            if not env_check(ctx, logger):
+                logger.error("环境检查未通过，终止运行。")
+                return _finish_run(1, "环境检查未通过")
+            logger.info("环境检查通过，继续执行客户端流程。")
+        else:
+            logger.info("已设置 --skip-env-check，跳过环境检查")
+        if getattr(args, "skip_scan", False):
+            logger.info("已设置 --skip-scan，跳过扫描步骤")
+            scan_code = 0
+        else:
+            logger.info("====== scan ======")
+            scan_code = scan(ctx, args, logger)
+            if scan_code != 0:
+                logger.info("扫描未产生可运行的任务，或扫描失败。代码=%s", scan_code)
+                return _finish_run(scan_code, "扫描失败或无新视频")
 
-    logger.info("====== wait-for-queue-completion ======")
-    _wait_for_queue_completion(ctx, args, logger)
+        logger.info("====== prepare-audio ======")
+        prepare_code = prepare_audio(ctx, args, logger)
+        if prepare_code != 0:
+            logger.warning("prepare-audio 返回代码=%s；继续提交因为服务端自身也可以下载", prepare_code)
 
-    logger.info("=== 关闭已打开的 Chrome 窗口 ===")
+        logger.info("====== submit ======")
+        submit_code = submit(ctx, args, logger)
+        if submit_code != 0:
+            return _finish_run(submit_code, "任务提交失败")
+
+        if not args.wait:
+            return _finish_run(0)
+
+        logger.info("=== 开始执行 chrome_bookmark_manager ===")
+        try:
+            import sys
+            _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+            if str(_bookmark_dir) not in sys.path:
+                sys.path.insert(0, str(_bookmark_dir))
+            from chrome_bookmark_manager import manage_chrome
+            manage_chrome('open', logger)
+        except Exception as e:
+            logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
+        logger.info("=== chrome_bookmark_manager 执行完成 ===")
+
+        logger.info("====== wait-for-queue-completion ======")
+        _wait_for_queue_completion(ctx, args, logger)
+
+        logger.info("=== 关闭已打开的 Chrome 窗口 ===")
+        try:
+            import sys
+            _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+            if str(_bookmark_dir) not in sys.path:
+                sys.path.insert(0, str(_bookmark_dir))
+            from chrome_bookmark_manager import manage_chrome
+            manage_chrome('close', logger)
+        except Exception as e:
+            logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
+
+        logger.info("====== collect ======")
+        collect_code = collect(ctx, args, logger)
+        if collect_code != 0:
+            return _finish_run(collect_code, "结果收集失败")
+
+        logger.info("====== render ======")
+        render_code = render(ctx, args, logger)
+
+        logger.info("====== sync ======")
+        sync_code = sync(ctx, args, logger)
+
+        if render_code == 0 and sync_code == 0:
+            logger.info("====== finish ======")
+            finish_code = finish(ctx, args, logger)
+            if finish_code == 0:
+                return _finish_run(0)
+            else:
+                return _finish_run(finish_code, "Git Push 备份失败")
+
+        err_steps = []
+        if render_code != 0:
+            err_steps.append("生成总结")
+        if sync_code != 0:
+            err_steps.append("同步网盘")
+        return _finish_run(1, f"步骤失败: {', '.join(err_steps)}")
+
+    except Exception as exc:
+        logger.exception("客户端运行出现异常: %s", exc)
+        return _finish_run(1, f"运行异常: {exc}")
+
+
+def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger, success: bool, duration_str: str, error_msg: str | None = None) -> None:
+    enabled = ctx.config.get("client.dingtalk.enabled", False)
+    if not enabled:
+        return
+
+    webhook = ctx.config.secret("client.dingtalk.webhook")
+    if not webhook:
+        logger.warning("DingTalk 消息已启用，但未配置 webhook。")
+        return
+
+    secret = ctx.config.secret("client.dingtalk.secret")
+
+    url = webhook
+    if secret:
+        try:
+            import hmac
+            import hashlib
+            import base64
+            import urllib.parse
+            timestamp = str(round(time.time() * 1000))
+            secret_bytes = secret.encode("utf-8")
+            string_to_sign = f"{timestamp}\n{secret}"
+            string_to_sign_bytes = string_to_sign.encode("utf-8")
+            hmac_code = hmac.new(secret_bytes, string_to_sign_bytes, digestmod=hashlib.sha256).digest()
+            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+            url = f"{webhook}&timestamp={timestamp}&sign={sign}"
+        except Exception as e:
+            logger.error("生成钉钉消息签名失败: %s", e)
+            return
+
+    # Build statistics markdown
+    lines = []
+    lines.append("### 📢 Bilibili2TXT 客户端运行结束")
+    lines.append(f"- **运行状态**: {'✅ 成功' if success else '❌ 失败'}")
+    if error_msg:
+        lines.append(f"- **错误原因**: {error_msg}")
+    lines.append(f"- **运行耗时**: {duration_str}")
+    lines.append("")
+
+    scan_stats = ctx.extra.get("scan_stats")
+    if scan_stats:
+        lines.append(f"- **扫描视频**: 新增 {scan_stats['created']} 个，跳过 {scan_stats['skipped']} 个")
+
+    prepare_stats = ctx.extra.get("prepare_stats")
+    if prepare_stats:
+        lines.append(f"- **音频准备**: 成功 {prepare_stats['succeeded']} 个，跳过 {prepare_stats['skipped']} 个，失败 {prepare_stats['failed']} 个")
+
+    submit_stats = ctx.extra.get("submit_stats")
+    if submit_stats:
+        lines.append(f"- **队列提交**: 成功 {submit_stats['succeeded']} 个，跳过 {submit_stats['skipped']} 个，失败 {submit_stats['failed']} 个")
+
+    collect_stats = ctx.extra.get("collect_stats")
+    if collect_stats:
+        lines.append(f"- **结果收集**: 成功 {collect_stats['succeeded']} 个，跳过 {collect_stats['skipped']} 个，失败 {collect_stats['failed']} 个")
+
+    render_stats = ctx.extra.get("render_stats")
+    if render_stats:
+        lines.append(f"- **总结生成**: 成功 {render_stats['succeeded']} 个，跳过 {render_stats['skipped']} 个，失败 {render_stats['failed']} 个")
+
+    sync_stats = ctx.extra.get("sync_stats")
+    if sync_stats:
+        lines.append(f"- **网盘同步**: 同步 {sync_stats['copied']} 个，跳过 {sync_stats['skipped']} 个，冲突 {sync_stats['conflicts']} 个，归档 {sync_stats['archived']} 个")
+
+    markdown_text = "\n".join(lines)
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": "Bilibili2TXT 客户端运行总结",
+            "text": markdown_text
+        }
+    }
+
     try:
-        import sys
-        _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-        if str(_bookmark_dir) not in sys.path:
-            sys.path.insert(0, str(_bookmark_dir))
-        from chrome_bookmark_manager import manage_chrome
-        manage_chrome('close', logger)
+        import requests
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        res_data = response.json()
+        if res_data.get("errcode") != 0:
+            logger.error("发送钉钉消息失败，接口返回: %s", res_data.get("errmsg"))
+        else:
+            logger.info("钉钉消息发送成功")
     except Exception as e:
-        logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
-
-    logger.info("====== collect ======")
-    collect_code = collect(ctx, args, logger)
-    if collect_code != 0:
-        return collect_code
-
-    logger.info("====== render ======")
-    render_code = render(ctx, args, logger)
-
-    logger.info("====== sync ======")
-    sync_code = sync(ctx, args, logger)
-
-    if render_code == 0 and sync_code == 0:
-        logger.info("====== finish ======")
-        return finish(ctx, args, logger)
-    return 1
+        logger.error("发送钉钉消息失败: %s", e)
 
 
 def _wait_for_queue_completion(ctx: CommandContext, args, logger: logging.Logger) -> None:
