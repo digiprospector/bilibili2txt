@@ -81,7 +81,7 @@ COMMANDS = {
         ("add", client_add, [ARG_BVID_POS]),
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
-        ("sync", client_sync, [ARG_FORCE]),
+        ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
         ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN, ARG_SKIP_ENV_CHECK]),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
         ("finish", client_finish, [ARG_MESSAGE]),

@@ -21,7 +21,7 @@ class NetdiskSync:
         self.dest_root = netdisk_root / "markdown"
         self.logger = logger
 
-    def sync(self, force: bool = False, today: date | None = None) -> SyncStats:
+    def sync(self, force: bool = False, today: date | None = None, bvid: str | None = None) -> SyncStats:
         today = today or date.today()
         stats = SyncStats()
         if today.day == 1:
@@ -39,6 +39,8 @@ class NetdiskSync:
                 self.logger.info("跳过非日期格式的 markdown 目录：%s", day_dir)
                 continue
             for md_file in day_dir.glob("*.md"):
+                if bvid and bvid not in md_file.name:
+                    continue
                 dest = self.destination_for(file_date, md_file.name, today)
                 self._copy(md_file, dest, force, stats)
         return stats

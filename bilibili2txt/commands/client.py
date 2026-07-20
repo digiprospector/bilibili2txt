@@ -576,7 +576,8 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 def sync(ctx: CommandContext, args, logger: logging.Logger) -> int:
     service = ctx.netdisk_sync(logger)
-    stats = service.sync(force=args.force)
+    bvid = getattr(args, "bvid", None)
+    stats = service.sync(force=args.force, bvid=bvid)
     logger.info(
         "同步总结: 已拷贝=%s 已跳过=%s 冲突数=%s 已归档数=%s",
         stats.copied,
