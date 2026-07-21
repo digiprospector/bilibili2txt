@@ -30,6 +30,11 @@ client:
   netdisk_dir: D:/Netdisk
   wait_interval_seconds: 60
   wait_timeout_seconds: 0
+  pipeline:
+    download_workers: 2
+    upload_workers: 2
+    render_workers: 3
+    submit_batch_size: 5
   dingtalk:
     enabled: false
     webhook: "https://oapi.dingtalk.com/robot/send?access_token=your_access_token"

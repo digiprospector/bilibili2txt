@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -281,6 +282,32 @@ class GitQueue:
                 self.return_to_pending(path, task, f"claim timeout after {timeout_seconds}s")
                 released += 1
         return released
+
+    @property
+    def pipeline_status_file(self) -> Path:
+        return self.repo_dir / "pipeline_status.json"
+
+    def set_pipeline_status(self, status: str, submitted_count: int) -> None:
+        data = {
+            "status": status,
+            "submitted_count": submitted_count,
+            "updated_at": now_iso(),
+        }
+        self.pipeline_status_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def get_pipeline_status(self) -> dict | None:
+        if not self.pipeline_status_file.exists():
+            return None
+        try:
+            return json.loads(self.pipeline_status_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def clear_pipeline_status(self) -> None:
+        self.pipeline_status_file.unlink(missing_ok=True)
 
 
 def _is_stale(claimed_at: str, timeout_seconds: int) -> bool:

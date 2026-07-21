@@ -215,8 +215,39 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 should_sync = True
                 continue
             if code == 1:
-                logger.info("队列中无待处理任务，正在退出...")
-                break
+                queue = ctx.queue(logger, sync=False)
+                pipeline = queue.get_pipeline_status()
+                if pipeline is None:
+                    logger.info("队列中无待处理任务，正在退出...")
+                    break
+
+                status = pipeline.get("status")
+                submitted_count = pipeline.get("submitted_count", "?")
+
+                if status == "complete":
+                    pending_count = len(list(queue.pending_dir.glob("*.json"))) if queue.pending_dir.exists() else 0
+                    claimed_count = len(list(queue.claimed_dir.rglob("*.json"))) if queue.claimed_dir.exists() else 0
+                    if pending_count == 0 and claimed_count == 0:
+                        queue.clear_pipeline_status()
+                        try:
+                            queue.commit_and_push("pipeline done: clear status")
+                        except Exception as exc:
+                            logger.warning("清理 pipeline_status 提交失败: %s", exc)
+                        logger.info("流水线全部任务已处理完毕，退出")
+                        break
+                    else:
+                        logger.info(
+                            "pipeline 已 complete 但仍有任务未完成: pending=%d claimed=%d，%s 秒后继续...",
+                            pending_count, claimed_count, interval
+                        )
+                        time.sleep(interval)
+                        should_sync = True
+                        continue
+
+                logger.info("客户端正在提交中(已提交 %s 个)，等待新任务，%s 秒后重试...", submitted_count, interval)
+                time.sleep(interval)
+                should_sync = True
+                continue
             if code == 2:
                 had_failure = True
                 logger.warning("任务失败但状态已处理，%s 秒后继续运行", interval)

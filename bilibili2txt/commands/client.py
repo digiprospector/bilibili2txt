@@ -5,6 +5,9 @@ import shutil
 import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from queue import Queue
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..config import CommandContext
 from ..models import Task
@@ -676,8 +679,366 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
     return True
 
 
+def _move_to_submitted(task_path: Path, submitted_dir: Path) -> None:
+    if task_path.exists():
+        submitted_dir.mkdir(parents=True, exist_ok=True)
+        target = submitted_dir / task_path.name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(task_path), str(submitted_dir))
+
+
+def _load_unfinished_tasks(ctx: CommandContext, logger: logging.Logger, webdav_files: set[str]):
+    db = ctx.database()
+    queue = ctx.queue(logger, sync=False)
+    audio_dir = ctx.config.temp_dir / "audio"
+    tasks_dir = ctx.config.temp_dir / "tasks"
+    submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
+    submitted_dir.mkdir(parents=True, exist_ok=True)
+
+    resume_download = []
+    resume_upload = []
+    resume_submit = []
+
+    if not tasks_dir.exists():
+        return resume_download, resume_upload, resume_submit
+
+    for task_file in sorted(tasks_dir.glob("*.json")):
+        try:
+            task = Task.from_file(task_file)
+        except Exception as exc:
+            logger.warning("解析未完成任务文件失败 %s: %s", task_file, exc)
+            continue
+
+        if task.status != "normal":
+            continue
+
+        if queue.task_exists(task.task_id):
+            _move_to_submitted(task_file, submitted_dir)
+            logger.info("恢复: %s 已在队列中，移至 submitted", task.task_id)
+            continue
+
+        remote_mp3 = f"{task.bvid}.mp3"
+        remote_part1 = f"{task.bvid}_1.mp3"
+        if remote_mp3 in webdav_files or remote_part1 in webdav_files:
+            resume_submit.append((task, task_file))
+            logger.info("恢复: %s 音频已在 WebDAV -> 直接提交队列", task.task_id)
+            continue
+
+        local_audio = sorted(audio_dir.glob(f"{task.bvid}*.mp3"))
+        if local_audio:
+            resume_upload.append((task, task_file, local_audio))
+            logger.info("恢复: %s 音频已下载 -> 上传 WebDAV", task.task_id)
+            continue
+
+        resume_download.append((task, task_file))
+        logger.info("恢复: %s 重新进入下载队列", task.task_id)
+
+    return resume_download, resume_upload, resume_submit
+
+
+def _scanner(ctx: CommandContext, args, logger: logging.Logger, download_queue: Queue, db, webdav_files: set[str]):
+    service = BilibiliService(ctx.config, logger)
+    if not service.login():
+        logger.error("Bilibili 登录失败，终止扫描")
+        download_queue.put(None)
+        return
+
+    output_dir = ctx.config.temp_dir / "tasks"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    max_pages = int(getattr(args, "max_pages", 1) or 1)
+    groups = getattr(args, "group", None)
+    up_mid = getattr(args, "up_mid", None)
+    scrape_duration_max = int(ctx.config.get("bilibili.scrape_duration_max", 7200))
+
+    scanned = 0
+    created = 0
+    skipped = 0
+
+    for info in service.iter_target_videos(up_mid, groups=groups, max_pages=max_pages):
+        bvid = str(info["bvid"])
+        if db.video_exists(bvid):
+            logger.debug("跳过已存在的视频: %s", bvid)
+            skipped += 1
+            continue
+
+        info.update(service.get_video_detail(bvid=bvid))
+        task = Task.from_bilibili_info(info)
+        if task.duration > scrape_duration_max:
+            task.status = "too_long"
+
+        task_path = output_dir / task.filename
+        for old_file in output_dir.glob(f"*_{bvid}.json"):
+            try:
+                old_file.unlink()
+            except Exception:
+                pass
+
+        task.write_json(task_path)
+        db.upsert_video(task)
+        db.upsert_task(task, task_path, "local")
+        created += 1
+
+        if task.status == "normal":
+            download_queue.put((task, task_path))
+            logger.info("📡 扫描到新视频 -> 投入下载队列: %s [%s]", task.title[:30], task.bvid)
+        else:
+            logger.info("跳过非 normal 视频: %s status=%s", task.bvid, task.status)
+        scanned += 1
+
+    download_queue.put(None)
+    logger.info("扫描结束: 共扫描 %d 个新视频 (新增 %d, 跳过已知 %d)", scanned, created, skipped)
+    ctx.extra["scan_stats"] = {"created": created, "skipped": skipped}
+
+
+def _download_worker(download_queue: Queue, upload_queue: Queue, config, logger: logging.Logger):
+    audio = AudioService(config, logger)
+    while True:
+        item = download_queue.get()
+        if item is None:
+            download_queue.put(None)
+            upload_queue.put(None)
+            break
+
+        task, task_path = item
+        try:
+            audio_files = audio.download_task_audio(task)
+            logger.info("⬇️ 下载完成: %s [%s] (%d 个文件)", task.title[:20], task.task_id, len(audio_files))
+            upload_queue.put((task, task_path, audio_files))
+        except Exception as exc:
+            logger.error("⬇️ 下载失败 %s [%s]: %s (将在下次运行重试)", task.title[:20], task.task_id, exc)
+
+
+def _upload_worker(upload_queue: Queue, submit_queue: Queue, config, logger: logging.Logger, done_counter: dict):
+    webdav = WebDavClient.from_config(config, logger)
+    while True:
+        item = upload_queue.get()
+        if item is None:
+            done_counter["count"] += 1
+            if done_counter["count"] >= done_counter["total"]:
+                submit_queue.put(None)
+            break
+
+        task, task_path, audio_files = item
+        try:
+            ok = True
+            for i, audio_file in enumerate(audio_files, 1):
+                if not audio_file.exists():
+                    continue
+                remote = f"{task.bvid}.mp3" if len(audio_files) == 1 else f"{task.bvid}_{i}.mp3"
+                if webdav.upload(audio_file, remote):
+                    logger.info("WebDAV 上传完成: %s -> %s", audio_file.name, remote)
+                    audio_file.unlink(missing_ok=True)
+                else:
+                    logger.error("WebDAV 上传失败: %s -> %s", audio_file.name, remote)
+                    ok = False
+                    break
+
+            if ok:
+                logger.info("⬆️ 上传任务完成: %s [%s]", task.title[:20], task.task_id)
+                submit_queue.put((task, task_path))
+            else:
+                logger.error("⬆️ 上传任务失败: %s [%s] (将在下次运行重试)", task.title[:20], task.task_id)
+        except Exception as exc:
+            logger.error("⬆️ 上传任务异常 %s [%s]: %s", task.title[:20], task.task_id, exc)
+
+
+def _submitter(submit_queue: Queue, queue: GitQueue, db, config, logger: logging.Logger, batch_size: int):
+    batch = []
+    total_submitted = 0
+    submitted_dir = config.data_dir / "tasks" / "submitted"
+    submitted_dir.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        item = submit_queue.get()
+        if item is None:
+            break
+
+        task, task_path = item
+        if queue.task_exists(task.task_id):
+            logger.info("📋 任务已存在于 Git 队列中: %s", task.task_id)
+            _move_to_submitted(task_path, submitted_dir)
+            continue
+
+        queue.add_pending_task(task)
+        db.upsert_task(task, task_path, "submitted")
+        db.mark_task_submitted(task.task_id)
+        batch.append((task, task_path))
+
+        if len(batch) >= batch_size:
+            _flush_batch(batch, queue, submitted_dir, logger, total_submitted)
+            total_submitted += len(batch)
+            batch = []
+
+    if batch:
+        _flush_batch(batch, queue, submitted_dir, logger, total_submitted)
+        total_submitted += len(batch)
+
+    queue.set_pipeline_status("complete", total_submitted)
+    try:
+        queue.commit_and_push(f"pipeline complete: total {total_submitted} task(s)")
+    except Exception as exc:
+        logger.warning("提交 pipeline complete 状态时遇到推送异常: %s", exc)
+
+    logger.info("📋 Submitter 处理完毕: 本次共推送 %d 个任务", total_submitted)
+
+
+def _flush_batch(batch: list, queue: GitQueue, submitted_dir: Path, logger: logging.Logger, prev_count: int):
+    task_ids = [t.task_id for t, _ in batch]
+    count = prev_count + len(batch)
+    queue.set_pipeline_status("submitting", count)
+    queue.commit_and_push(f"submit batch ({len(batch)}): {', '.join(task_ids)}")
+
+    for task, task_path in batch:
+        _move_to_submitted(task_path, submitted_dir)
+
+    logger.info("📋 批量提交 %d 个任务成功 (累计 %d): %s", len(batch), count, task_ids)
+
+
+def _run_pipeline(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    cfg = ctx.config
+    max_dw = int(cfg.get("client.pipeline.download_workers", 2))
+    max_uw = int(cfg.get("client.pipeline.upload_workers", 2))
+    batch_size = int(cfg.get("client.pipeline.submit_batch_size", 5))
+
+    download_queue = Queue()
+    upload_queue = Queue()
+    submit_queue = Queue()
+
+    db = ctx.database()
+    queue = ctx.queue(logger, sync=True)
+    webdav = WebDavClient.from_config(cfg, logger)
+
+    try:
+        webdav_files = webdav.list_files()
+    except Exception as exc:
+        logger.warning("获取 WebDAV 文件列表失败: %s", exc)
+        webdav_files = set()
+
+    resume_dl, resume_ul, resume_sub = _load_unfinished_tasks(ctx, logger, webdav_files)
+    for task, path in resume_dl:
+        download_queue.put((task, path))
+    for task, path, audio_files in resume_ul:
+        upload_queue.put((task, path, audio_files))
+    for task, path in resume_sub:
+        submit_queue.put((task, path))
+
+    logger.info("断点恢复统计: 待下载=%d, 待上传=%d, 待提交=%d", len(resume_dl), len(resume_ul), len(resume_sub))
+
+    queue.set_pipeline_status("submitting", 0)
+    try:
+        queue.commit_and_push("pipeline start")
+    except Exception as exc:
+        logger.warning("初始化 pipeline 状态推送失败：%s", exc)
+
+    upload_done_counter = {"count": 0, "total": max_dw}
+
+    scanner_thread = Thread(target=_scanner, args=(ctx, args, logger, download_queue, db, webdav_files), daemon=True)
+    download_threads = [
+        Thread(target=_download_worker, args=(download_queue, upload_queue, cfg, logger), daemon=True)
+        for _ in range(max_dw)
+    ]
+    upload_threads = [
+        Thread(target=_upload_worker, args=(upload_queue, submit_queue, cfg, logger, upload_done_counter), daemon=True)
+        for _ in range(max_uw)
+    ]
+    submitter_thread = Thread(
+        target=_submitter, args=(submit_queue, queue, db, cfg, logger, batch_size), daemon=True
+    )
+
+    scanner_thread.start()
+    for t in download_threads:
+        t.start()
+    for t in upload_threads:
+        t.start()
+    submitter_thread.start()
+
+    scanner_thread.join()
+    for t in download_threads:
+        t.join()
+    for t in upload_threads:
+        t.join()
+    submitter_thread.join()
+
+    logger.info("====== 流水线前半段（扫描、下载、上传、提交）执行完毕 ======")
+    return 0
+
+
+def _parallel_render(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    db = ctx.database()
+    ai = AIService(ctx.config, logger)
+    ai.test_and_filter_providers()
+    save_dir = ctx.config.data_dir / "save"
+    markdown_root = ctx.config.data_dir / "markdown"
+    max_workers = int(ctx.config.get("client.pipeline.render_workers", 3))
+
+    text_files = sorted(save_dir.glob("*.text"))
+    bvid_arg = getattr(args, "bvid", None)
+    if bvid_arg:
+        text_files = [path for path in text_files if bvid_arg in path.name]
+    if not text_files:
+        logger.info("在 %s 中未找到任何可渲染的 .text 文件", save_dir)
+        ctx.extra["render_stats"] = {"succeeded": 0, "skipped": 0, "failed": 0}
+        return 0
+
+    succeeded = 0
+    skipped = 0
+    failed = 0
+
+    to_render = []
+    for text_file in text_files:
+        meta = parse_transcript_filename(text_file)
+        if not meta:
+            logger.info("跳过无法识别的文稿文件名: %s", text_file.name)
+            skipped += 1
+            continue
+        target = md_path_for(meta, markdown_root, text_file)
+        force_flag = getattr(args, "force", False)
+        if target.exists() and not force_flag:
+            logger.debug("跳过已存在的 Markdown: %s", target)
+            skipped += 1
+            continue
+        to_render.append((text_file, meta, target))
+
+    total = len(to_render)
+    if not to_render:
+        logger.info("渲染总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+        ctx.extra["render_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
+        return 0
+
+    def _render_one(text_file, meta, target):
+        transcript = text_file.read_text(encoding="utf-8")
+        ai_provider, summary = ai.summarize(transcript)
+        content = build_markdown(meta, transcript, summary, ai_provider)
+        return ai_provider, content
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_render_one, tf, m, t): (tf, m, t, idx)
+            for idx, (tf, m, t) in enumerate(to_render, 1)
+        }
+        for future in as_completed(futures):
+            text_file, meta, target, idx = futures[future]
+            try:
+                ai_provider, content = future.result()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+                db.record_render(meta.bvid, text_file, target, ai_provider, "success")
+                logger.info("已生成 Markdown [%d/%d]: %s (由 %s 生成)", idx, total, target, ai_provider)
+                succeeded += 1
+            except Exception as exc:
+                formatted_err = format_api_error(exc)
+                db.record_render(meta.bvid, text_file, None, None, "failed", formatted_err)
+                logger.error("为 %s 生成总结失败 [%d/%d]: %s", text_file, idx, total, formatted_err)
+                failed += 1
+
+    logger.info("渲染总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
+    ctx.extra["render_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
+    return 0 if failed == 0 else 1
+
+
 def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    logger.info("客户端运行启动")
+    logger.info("客户端运行启动（流水线并行模式）")
     start_time = time.time()
 
     def _finish_run(code: int, error_msg: str | None = None) -> int:
@@ -697,27 +1058,18 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.info("环境检查通过，继续执行客户端流程。")
         else:
             logger.info("已设置 --skip-env-check，跳过环境检查")
+
         if getattr(args, "skip_scan", False):
-            logger.info("已设置 --skip-scan，跳过扫描步骤")
-            scan_code = 0
+            logger.info("已设置 --skip-scan，跳过扫描与下载提交流水线步骤")
         else:
-            logger.info("====== scan ======")
-            scan_code = scan(ctx, args, logger)
-            if scan_code != 0:
-                logger.info("扫描未产生可运行的任务，或扫描失败。代码=%s", scan_code)
-                return _finish_run(scan_code, "扫描失败或无新视频")
+            logger.info("====== 启动流水线 (scan → download → upload → submit) ======")
+            pipeline_code = _run_pipeline(ctx, args, logger)
+            if pipeline_code != 0:
+                return _finish_run(pipeline_code, "流水线执行失败")
 
-        logger.info("====== prepare-audio ======")
-        prepare_code = prepare_audio(ctx, args, logger)
-        if prepare_code != 0:
-            logger.warning("prepare-audio 返回代码=%s；继续提交因为服务端自身也可以下载", prepare_code)
-
-        logger.info("====== submit ======")
-        submit_code = submit(ctx, args, logger)
-        if submit_code != 0:
-            return _finish_run(submit_code, "任务提交失败")
-
-        if not args.wait:
+        wait_flag = getattr(args, "wait", False)
+        if not wait_flag:
+            logger.info("未启用 --wait 选项，提交完成即退出")
             return _finish_run(0)
 
         logger.info("=== 开始执行 chrome_bookmark_manager ===")
@@ -751,8 +1103,8 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         if collect_code != 0:
             return _finish_run(collect_code, "结果收集失败")
 
-        logger.info("====== render ======")
-        render_code = render(ctx, args, logger)
+        logger.info("====== render (并行) ======")
+        render_code = _parallel_render(ctx, args, logger)
 
         logger.info("====== sync ======")
         sync_code = sync(ctx, args, logger)
