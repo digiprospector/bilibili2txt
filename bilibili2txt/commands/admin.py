@@ -16,19 +16,58 @@ from ..services.video_id import parse_video_input
 from ..services.markdown import render_or_update_summary
 
 
+import json
+from datetime import datetime, timezone
+
+
+def _get_ignored_file_path(ctx: CommandContext) -> Path:
+    return ctx.config.data_dir / "ignored.json"
+
+
+def _load_ignored_tasks(ctx: CommandContext) -> dict[str, dict]:
+    ignored_path = _get_ignored_file_path(ctx)
+    if not ignored_path.exists():
+        return {}
+    try:
+        data = json.loads(ignored_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_ignored_tasks(ctx: CommandContext, data: dict[str, dict]) -> None:
+    ignored_path = _get_ignored_file_path(ctx)
+    ignored_path.parent.mkdir(parents=True, exist_ok=True)
+    ignored_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8"
+    )
+
+
 def check_missing(ctx: CommandContext, _args, logger: logging.Logger) -> int:
     submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
     save_dir = ctx.config.data_dir / "save"
     output_dir = ctx.config.temp_dir / "missing_tasks"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    ignored_data = _load_ignored_tasks(ctx)
+
     text_names = [path.name for path in save_dir.glob("*.text")] if save_dir.exists() else []
     missing = 0
     checked = 0
+    ignored_count = 0
     for task_file in sorted(submitted_dir.glob("*.json")):
         task = Task.from_file(task_file)
+        if task.bvid in ignored_data:
+            reason = ignored_data[task.bvid].get("reason", "ignored")
+            logger.info("跳过忽略列表中的任务: %s (原因: %s)", task.bvid, reason)
+            ignored_count += 1
+            continue
         if task.status != "normal":
             logger.info("跳过非 normal 状态的已提交任务: %s status=%s", task.task_id, task.status)
+            ignored_count += 1
             continue
         checked += 1
         if any(task.bvid in name for name in text_names):
@@ -38,8 +77,129 @@ def check_missing(ctx: CommandContext, _args, logger: logging.Logger) -> int:
         logger.info("已导出丢失的任务: %s -> %s", task_file, target)
         missing += 1
 
-    logger.info("检查丢失任务总结: 已检查=%s 丢失=%s", checked, missing)
+    logger.info("检查丢失任务总结: 已检查=%s 丢失=%s 忽略=%s", checked, missing, ignored_count)
     return 0
+
+
+def ignore(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    ignored_data = _load_ignored_tasks(ctx)
+    if getattr(args, "list", False):
+        if not ignored_data:
+            logger.info("目前没有记录任何被忽略的任务 (data/ignored.json 为空)")
+            return 0
+        logger.info("=== 被忽略的任务列表 (%d 项) ===", len(ignored_data))
+        for bvid, info in ignored_data.items():
+            reason = info.get("reason", "unknown")
+            note = info.get("note", "")
+            ignored_at = info.get("ignored_at", "")
+            logger.info("BV号: %s | 原因: %s | 时间: %s%s", bvid, reason, ignored_at, f" | 备注: {note}" if note else "")
+        return 0
+
+    raw_bvid = getattr(args, "bvid", None)
+    if not raw_bvid:
+        logger.error("请指定要忽略的 BV 号 (-b/--bvid BVID) 或查看列表 (-l/--list)")
+        return 1
+
+    bvid = raw_bvid.strip()
+    reason = getattr(args, "reason", None) or "undownloadable"
+    note = getattr(args, "note", None) or ""
+    now_str = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+    ignored_data[bvid] = {
+        "bvid": bvid,
+        "reason": reason,
+        "note": note,
+        "ignored_at": now_str,
+    }
+    _save_ignored_tasks(ctx, ignored_data)
+    logger.info("已将 %s 记录到 data/ignored.json (原因: %s)", bvid, reason)
+
+    # 同步更新 submitted 任务文件 status
+    submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
+    if submitted_dir.exists():
+        for task_file in submitted_dir.glob(f"*_{bvid}.json"):
+            try:
+                task = Task.from_file(task_file)
+                task.status = "ignored"
+                task.write_json(task_file)
+                logger.info("已更新 submitted 任务文件状态为 ignored: %s", task_file.name)
+            except Exception as exc:
+                logger.warning("更新 submitted 任务文件失败 %s: %s", task_file.name, exc)
+
+    # 同步更新 queue/failed/ 任务文件 status，并推送队列仓库
+    from ..services.gitqueue import GitQueue
+    queue = GitQueue(ctx.config.queue_dir, logger)
+    failed_dir = queue.failed_dir
+    queue_modified = False
+    if failed_dir.exists():
+        for task_file in failed_dir.rglob("*.json"):
+            try:
+                task = Task.from_file(task_file)
+                if task.bvid == bvid and task.status != "ignored":
+                    task.status = "ignored"
+                    task.write_json(task_file)
+                    queue_modified = True
+                    logger.info("已更新 failed 任务文件状态为 ignored: %s", task_file.name)
+            except Exception as exc:
+                logger.warning("更新 failed 任务文件失败 %s: %s", task_file.name, exc)
+    if queue_modified:
+        try:
+            queue.commit_and_push(f"ignore {bvid}")
+        except Exception as exc:
+            logger.warning("推送队列仓库失败（ignore）: %s", exc)
+
+    # 同步更新数据库里的 video_status
+    try:
+        db = ctx.database()
+        with db.connect() as conn:
+            conn.execute("UPDATE videos SET video_status = ? WHERE bvid = ?", ("ignored", bvid))
+            conn.commit()
+    except Exception as exc:
+        logger.warning("更新数据库 video_status 失败: %s", exc)
+
+    return 0
+
+
+def unignore(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    raw_bvid = getattr(args, "bvid", None)
+    if not raw_bvid:
+        logger.error("必须提供 BV 号 (-b/--bvid BVID 或位置参数 bvid)")
+        return 1
+
+    bvid = raw_bvid.strip()
+    ignored_data = _load_ignored_tasks(ctx)
+    if bvid not in ignored_data:
+        logger.info("BV号 %s 不在 data/ignored.json 列表中", bvid)
+        return 0
+
+    del ignored_data[bvid]
+    _save_ignored_tasks(ctx, ignored_data)
+    logger.info("已从 data/ignored.json 中移除 %s", bvid)
+
+    # 恢复 submitted 任务文件状态为 normal
+    submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
+    if submitted_dir.exists():
+        for task_file in submitted_dir.glob(f"*_{bvid}.json"):
+            try:
+                task = Task.from_file(task_file)
+                if task.status == "ignored":
+                    task.status = "normal"
+                    task.write_json(task_file)
+                    logger.info("已恢复 submitted 任务文件状态为 normal: %s", task_file.name)
+            except Exception as exc:
+                logger.warning("恢复 submitted 任务文件失败 %s: %s", task_file.name, exc)
+
+    # 恢复数据库里的 video_status
+    try:
+        db = ctx.database()
+        with db.connect() as conn:
+            conn.execute("UPDATE videos SET video_status = ? WHERE bvid = ?", ("normal", bvid))
+            conn.commit()
+    except Exception as exc:
+        logger.warning("恢复数据库 video_status 失败: %s", exc)
+
+    return 0
+
 
 
 def webdav_upload(ctx: CommandContext, args, logger: logging.Logger) -> int:

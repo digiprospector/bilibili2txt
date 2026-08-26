@@ -14,10 +14,12 @@ from .commands.admin import (
     download_audio as admin_download_audio,
     download_audio_upload as admin_download_audio_upload,
     fix_summaries as admin_fix_summaries,
+    ignore as admin_ignore,
     migrate_main_db as admin_migrate_main_db,
     push_data as admin_push_data,
     resummarize as admin_resummarize,
     status as admin_status,
+    unignore as admin_unignore,
     webdav_clean as admin_webdav_clean,
     webdav_upload as admin_webdav_upload,
 )
@@ -61,6 +63,8 @@ ARG_SOURCE_DB = ("source_db", {})
 ARG_TARGET_DB = ("target_db", {})
 ARG_FAILED = (("--failed",), {"action": "store_true", "help": "重新提交 queue/failed 目录下的所有失败任务"})
 ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV 号或任务 ID，可指定多次或用逗号分隔"})
+ARG_REASON = (("-r", "--reason"), {"default": "undownloadable", "help": "忽略原因（如 undownloadable, deleted, upower）"})
+ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
@@ -77,7 +81,7 @@ COMMANDS = {
     "client": [
         ("scan", client_scan, _SCAN_ARGS),
         ("submit", client_submit, [ARG_INPUT]),
-        ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION]),
+        ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION, ARG_FORCE]),
         ("add", client_add, [ARG_BVID_POS]),
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
@@ -97,6 +101,8 @@ COMMANDS = {
     "admin": [
         ("status", admin_status, [ARG_LIMIT]),
         ("check-missing", admin_check_missing, []),
+        ("ignore", admin_ignore, [ARG_BVID, ARG_REASON, ARG_NOTE, ARG_LIST]),
+        ("unignore", admin_unignore, [ARG_BVID]),
         ("check-ai", admin_check_ai, [ARG_LIST, ARG_NAME, ARG_STOCK, ARG_MODEL]),
         ("fix-summaries", admin_fix_summaries, [ARG_LIMIT, ARG_BVID]),
         ("webdav-clean", admin_webdav_clean, [ARG_DRY_RUN]),
@@ -212,6 +218,8 @@ COMMAND_HELPS = {
     "admin": {
         "status": "显示当前任务队列状态和推荐处理命令",
         "check-missing": "检查是否存在已分配但未成功转写或存在遗漏的任务",
+        "ignore": "将特定 BV 号记录在 data/ignored.json 中忽略，避免 check-missing 重试",
+        "unignore": "从 data/ignored.json 中移除 BV 号并恢复常规跟踪",
         "check-ai": "运行 AI 服务可用性自检与可用模型/配额测试",
         "fix-summaries": "修复或重新生成本地总结失败的 Markdown 文本",
         "migrate-main-db": "将 main 分支旧 videos SQLite 数据库迁移到 dev 新数据库结构",

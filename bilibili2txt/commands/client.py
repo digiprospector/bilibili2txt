@@ -232,6 +232,18 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
     webdav = WebDavClient.from_config(ctx.config, logger)
     remote_files = webdav.list_files()
 
+    # 加载 ignored.json，用于跳过已忽略的任务
+    ignored_path = ctx.config.data_dir / "ignored.json"
+    ignored_bvids: set[str] = set()
+    if ignored_path.exists():
+        import json as _json
+        try:
+            _data = _json.loads(ignored_path.read_text(encoding="utf-8"))
+            if isinstance(_data, dict):
+                ignored_bvids = set(_data.keys())
+        except Exception:
+            pass
+
     temp_tasks_dir = ctx.config.temp_dir / "tasks"
     pending_dir = queue.pending_dir
     failed_dir = queue.failed_dir
@@ -274,8 +286,14 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
         is_failed_task = _is_under(path, failed_dir)
 
+        # 检查 ignored.json 或 task.status，已忽略的立即跳过
+        if task.bvid in ignored_bvids or task.status == "ignored":
+            logger.info("跳过已忽略任务: %s (bvid=%s)", task.task_id, task.bvid)
+            skipped += 1
+            continue
+
         if is_failed_task:
-            if task.client_retries >= 3:
+            if not getattr(args, "force", False) and task.client_retries >= 3:
                 logger.info("跳过已达到最大客户端重试次数的任务: %s client_retries=%s", task.task_id, task.client_retries)
                 skipped += 1
                 continue

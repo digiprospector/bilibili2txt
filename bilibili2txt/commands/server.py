@@ -135,6 +135,24 @@ def publish(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = T
 
             shutil.rmtree(result_dir)
             logger.info("已删除本地结果目录：%s", result_dir)
+
+            # 清理 temp/audio/ 中该任务的音频文件
+            audio_dir = ctx.config.temp_dir / "audio"
+            if audio_dir.exists():
+                audio_files = list(audio_dir.glob(f"{task.bvid}*.mp3*"))
+                for f in audio_files:
+                    f.unlink(missing_ok=True)
+                if audio_files:
+                    logger.info("已删除任务 %s 的音频文件：%s 个", task.bvid, len(audio_files))
+
+            # 清理 temp/chunks/ 中该任务的分片目录
+            chunks_dir = ctx.config.temp_dir / "chunks"
+            if chunks_dir.exists():
+                for chunk_subdir in chunks_dir.iterdir():
+                    if chunk_subdir.is_dir() and chunk_subdir.name.startswith(task.bvid):
+                        shutil.rmtree(chunk_subdir)
+                        logger.info("已删除任务 %s 的分片目录：%s", task.bvid, chunk_subdir)
+
         return 0
 
     if not task.last_error:

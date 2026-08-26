@@ -29,20 +29,36 @@ class AudioService:
             return files
         return self._download_with_ytdlp(task)
 
-    def download_task_audio(self, task: Task) -> list[Path]:
+    def download_task_audio(self, task: Task, force_redownload: bool = False) -> list[Path]:
+        if not force_redownload:
+            existing = sorted(self.audio_dir.glob(f"{task.bvid}*.mp3"))
+            valid = [f for f in existing if f.is_file() and f.stat().st_size > 0]
+            if valid:
+                self.logger.info("检测到本地已存在音频文件 (%d 个)，直接使用本地文件：%s", len(valid), [f.name for f in valid])
+                return valid
+
         self._clean_task_audio(task)
         return self._download_with_ytdlp(task)
 
     def upload_task_audio(self, task: Task, audio_files: list[Path], show_progress: bool = True) -> bool:
         webdav = WebDavClient.from_config(self.config, self.logger)
         ok = True
+        uploaded_files: list[Path] = []
         for index, audio_file in enumerate(audio_files, start=1):
             remote_name = f"{task.bvid}.mp3" if len(audio_files) == 1 else f"{task.bvid}_{index}.mp3"
             if not webdav.upload(audio_file, remote_name, show_progress=show_progress):
                 ok = False
-                continue
-            audio_file.unlink(missing_ok=True)
-            self.logger.info("已上传并删除本地音频文件：%s", audio_file)
+                self.logger.error("上传音频文件到 WebDAV 失败：%s，保留本地音频文件", audio_file)
+                break
+            uploaded_files.append(audio_file)
+
+        if ok:
+            for audio_file in uploaded_files:
+                audio_file.unlink(missing_ok=True)
+                self.logger.info("音频已全量成功上传，删除了本地音频文件：%s", audio_file)
+        else:
+            self.logger.warning("音频上传未完成/失败，保留本地音频文件以便再次重试：%s", task.bvid)
+
         return ok
 
     def _download_from_webdav(self, task: Task, webdav: WebDavClient) -> list[Path]:
