@@ -132,14 +132,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     webdav = WebDavClient.from_config(ctx.config, logger)
     remote_files = webdav.list_files()
 
-    audio_on_webdav = False
-    if f"{task.bvid}.mp3" in remote_files:
-        audio_on_webdav = True
-    else:
-        for rf in remote_files:
-            if rf.startswith(f"{task.bvid}_") and rf.endswith(".mp3"):
-                audio_on_webdav = True
-                break
+    audio_on_webdav = webdav.has_audio_files(task.bvid, remote_files)
 
     if audio_on_webdav:
         logger.info("音频已在 WebDAV 上存在，跳过下载: %s", task.bvid)
@@ -312,14 +305,7 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
             skipped += 1
             continue
 
-        audio_on_webdav = False
-        if f"{task.bvid}.mp3" in remote_files:
-            audio_on_webdav = True
-        else:
-            for rf in remote_files:
-                if rf.startswith(f"{task.bvid}_") and rf.endswith(".mp3"):
-                    audio_on_webdav = True
-                    break
+        audio_on_webdav = webdav.has_audio_files(task.bvid, remote_files)
 
         if audio_on_webdav:
             if is_failed_task:

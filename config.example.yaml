@@ -13,6 +13,13 @@ queue:
   done_dir: done
   failed_dir: failed
 
+site:
+  repo_dir: site
+  base_url: "https://your-username.github.io/bilibili-notes/"
+  title: "Bilibili 视频笔记与 AI 总结"
+  author: "bilibili2txt"
+  theme: "PaperMod"
+
 bilibili:
   target_groups:
     - 默认分组
@@ -24,6 +31,7 @@ webdav:
   username: your_username
   password_env: B2T_WEBDAV_PASSWORD
   proxy: ""
+  upload_split_size_mb: 50  # 文件大于此大小(MB)时自动拆分上传，0表示不拆分
 
 client:
   local_download_audio_seconds: 1800

@@ -6,8 +6,15 @@ import sys
 from pathlib import Path
 
 from .config import CommandContext, ConfigError, load_config
-from .commands.init import data as init_data, queue as init_queue, InitError
+from .commands.init import data as init_data, queue as init_queue, site as init_site, InitError
 from .commands.client import add as client_add, collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
+from .commands.hugo import (
+    init as hugo_init,
+    sync as hugo_sync,
+    build as hugo_build,
+    preview as hugo_preview,
+    push as hugo_push,
+)
 from .commands.admin import (
     check_ai as admin_check_ai,
     check_missing as admin_check_missing,
@@ -65,10 +72,12 @@ ARG_FAILED = (("--failed",), {"action": "store_true", "help": "重新提交 queu
 ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV 号或任务 ID，可指定多次或用逗号分隔"})
 ARG_REASON = (("-r", "--reason"), {"default": "undownloadable", "help": "忽略原因（如 undownloadable, deleted, upower）"})
 ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
+ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
 _RENDER_ARGS = [ARG_FORCE, ARG_BVID]
+_HUGO_ARGS = [ARG_FORCE, ARG_BVID]
 
 # ---------------------------------------------------------------------------
 # Command registry: role -> [(command_name, handler, [arg_specs])]
@@ -77,6 +86,14 @@ COMMANDS = {
     "init": [
         ("data", init_data, []),
         ("queue", init_queue, []),
+        ("site", init_site, []),
+    ],
+    "site": [
+        ("init", hugo_init, []),
+        ("sync", hugo_sync, _HUGO_ARGS),
+        ("build", hugo_build, _HUGO_ARGS),
+        ("preview", hugo_preview, _HUGO_ARGS + [ARG_PORT]),
+        ("push", hugo_push, [ARG_MESSAGE]),
     ],
     "client": [
         ("scan", client_scan, _SCAN_ARGS),
@@ -194,6 +211,14 @@ COMMAND_HELPS = {
     "init": {
         "data": "初始化本地数据仓库（创建目录结构、数据库和配置文件）",
         "queue": "初始化共享任务队列仓库（创建队列目录结构）",
+        "site": "初始化 Hugo 静态博客网站独立仓库（创建站点结构与 GitHub Actions 工作流）",
+    },
+    "site": {
+        "init": "初始化 Hugo 静态博客网站独立仓库（关联远程 GitHub 仓库）",
+        "sync": "将本地 Markdown 笔记增量转换为带 Front Matter 的 Hugo 文章",
+        "build": "同步 Markdown 笔记并调用 Hugo 执行本地静态站点构建",
+        "preview": "同步 Markdown 笔记并启动 Hugo 本地预览开发服务器",
+        "push": "提交并推送 site 仓库的所有更改至远程 GitHub 仓库，触发 GitHub Actions 自动部署",
     },
     "client": {
         "scan": "扫描关注的 UP 主，检查是否有新发布的视频",
@@ -240,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     role_helps = {
         "init": "初始化相关命令（创建目录结构、关联 Git 仓库等）",
+        "site": "Hugo 静态博客网站管理（Markdown 转换、本地预览、推送到 GitHub Pages 等）",
         "client": "客户端/本地控制端流程（扫描、提交、收集、渲染、同步等）",
         "server": "转写节点/服务端流程（认领、转写、发布等）",
         "admin": "管理员工具（检查、重试、AI诊断、WebDAV清理等）",

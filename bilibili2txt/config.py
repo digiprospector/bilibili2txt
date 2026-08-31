@@ -33,6 +33,10 @@ class AppConfig:
         return self.path("queue.repo_dir", "queue")
 
     @property
+    def site_dir(self) -> Path:
+        return self.path("site.repo_dir", "site")
+
+    @property
     def temp_dir(self) -> Path:
         return self.path("app.temp_dir", "temp")
 
@@ -136,4 +140,14 @@ class CommandContext:
 
         netdisk_dir = self.config.path("client.netdisk_dir")
         return NetdiskSync(self.config.data_dir / "markdown", netdisk_dir, logger)
+
+    def hugo_site(self, logger: logging.Logger):
+        from .services.hugo import HugoSite
+
+        return HugoSite(
+            site_root=self.config.site_dir,
+            markdown_root=self.config.data_dir / "markdown",
+            config=self.config,
+            logger=logger,
+        )
 

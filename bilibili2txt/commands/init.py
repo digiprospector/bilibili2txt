@@ -37,6 +37,18 @@ def queue(ctx: CommandContext, _args, logger: logging.Logger) -> int:
     return 0
 
 
+def site(ctx: CommandContext, _args, logger: logging.Logger) -> int:
+    repo_dir = ctx.config.site_dir
+    _prepare_repo(repo_dir, "site", logger)
+    hugo = ctx.hugo_site(logger)
+    hugo.ensure_layout()
+    _commit_repo(repo_dir, "init site repo", logger)
+    _push_initial_main(repo_dir, "site", logger)
+    logger.info("Site repo initialized: %s", repo_dir)
+    return 0
+
+
+
 def _prepare_repo(repo_dir: Path, name: str, logger: logging.Logger) -> None:
     repo_dir.mkdir(parents=True, exist_ok=True)
     if not _is_git_repo(repo_dir):

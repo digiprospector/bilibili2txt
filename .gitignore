@@ -220,6 +220,7 @@ userdata/*
 !userdata/.gitkeep
 data/
 queue/
+site/
 
 # Antigravity AI Agent runtime (auto-added by git-pro)
 .antigravity/
