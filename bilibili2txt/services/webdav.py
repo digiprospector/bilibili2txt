@@ -115,6 +115,7 @@ class WebDavClient:
             # 检查是否存在分片文件 (如 remote_name.part01)
             part01_name = f"{remote_name}.part01"
             part01_url = self.url_for(part01_name)
+            self.logger.info("WebDAV 分片下载检查: %s", part01_url)
             with requests.get(
                 part01_url,
                 auth=HTTPBasicAuth(self.username, self.password),

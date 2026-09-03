@@ -83,9 +83,12 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 bvid = str(fav_info["bvid"])
                 aid = fav_info.get("aid")
 
-                # 如果 sqlite 中已经记录处理过该视频，直接从收藏夹删除，不再处理
-                if db.video_exists(bvid):
-                    logger.info("[收藏夹: %s] 视频已存在于数据库，跳过处理并准备从收藏夹删除: %s", folder_name, bvid)
+                save_dir = ctx.config.data_dir / "save"
+                is_collected = db.is_video_collected(bvid) or (save_dir.exists() and any(save_dir.glob(f"*{bvid}*")))
+
+                # 1. 如果视频已经收集过文稿(collected)，说明历史已处理完成，直接从收藏夹删除，不再重复处理
+                if is_collected:
+                    logger.info("[收藏夹: %s] 视频文稿已收集(collected)，跳过处理并准备从收藏夹删除: %s", folder_name, bvid)
                     fav_skipped += 1
                     if not aid:
                         try:
@@ -95,10 +98,18 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
                             logger.warning("获取视频 %s aid 失败: %s", bvid, e)
 
                     if aid and service.delete_from_favorite(media_id, aid):
-                        logger.info("[收藏夹: %s] 已成功从收藏夹删除已处理视频: %s (aid=%s)", folder_name, bvid, aid)
+                        logger.info("[收藏夹: %s] 已成功从收藏夹删除已收集视频: %s (aid=%s)", folder_name, bvid, aid)
                         fav_deleted_existing += 1
                     else:
-                        logger.warning("[收藏夹: %s] 从收藏夹删除已处理视频失败: %s (aid=%s)", folder_name, bvid, aid)
+                        logger.warning("[收藏夹: %s] 从收藏夹删除已收集视频失败: %s (aid=%s)", folder_name, bvid, aid)
+                    continue
+
+                # 2. 如果视频在数据库中存在但尚未 collected（可能还在排队/处理中），不应直接删除收藏夹
+                if db.video_exists(bvid):
+                    logger.info("[收藏夹: %s] 视频已在数据库中但尚未收集完成(未 collected)，保留在收藏夹并跳过重复创建: %s", folder_name, bvid)
+                    fav_skipped += 1
+                    # 登记在 favorite_tasks 表中，待后续转写收集和渲染完成后自动清理
+                    db.upsert_favorite_task(bvid, aid, media_id, folder_name)
                     continue
 
                 # 未处理的新视频：获取详细信息并创建任务
@@ -140,7 +151,7 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
     total_created = group_created + fav_created
     total_skipped = group_skipped + fav_skipped
     logger.info(
-        "扫描总结: UP主新建=%s 跳过=%s | 收藏夹新建=%s 已存在直接删除=%s | 总新建=%s 总跳过=%s",
+        "扫描总结: UP主新建=%s 跳过=%s | 收藏夹新建=%s 已收集直接删除=%s | 总新建=%s 总跳过=%s",
         group_created,
         group_skipped,
         fav_created,
@@ -985,7 +996,7 @@ def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger,
 
     scan_stats = ctx.extra.get("scan_stats")
     if scan_stats:
-        fav_del_msg = f"，收藏夹已处理直接移出 {scan_stats['fav_deleted_existing']} 个" if scan_stats.get("fav_deleted_existing") else ""
+        fav_del_msg = f"，收藏夹已收集直接移出 {scan_stats['fav_deleted_existing']} 个" if scan_stats.get("fav_deleted_existing") else ""
         lines.append(f"- **扫描视频**: 新增 {scan_stats['created']} 个，跳过 {scan_stats['skipped']} 个{fav_del_msg}")
 
     prepare_stats = ctx.extra.get("prepare_stats")

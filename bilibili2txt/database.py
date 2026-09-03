@@ -94,6 +94,20 @@ class ClientDatabase:
             row = conn.execute("SELECT 1 FROM videos WHERE bvid = ?", (bvid,)).fetchone()
         return row is not None
 
+    def is_video_collected(self, bvid: str) -> bool:
+        """检查视频是否已被收集过文稿（tasks 状态为 done，或存在成功的渲染记录）"""
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM tasks WHERE bvid = ? AND queue_state = 'done'
+                UNION
+                SELECT 1 FROM rendered_files WHERE bvid = ? AND render_status = 'success'
+                LIMIT 1
+                """,
+                (bvid, bvid),
+            ).fetchone()
+        return row is not None
+
     def upsert_video(self, task: Task) -> None:
         now = now_iso()
         with self.connect() as conn:
