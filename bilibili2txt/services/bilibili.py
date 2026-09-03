@@ -123,6 +123,115 @@ class BilibiliService:
             if not found:
                 self.logger.warning("未找到配置的群组：%s", group_name)
 
+    def get_user_favorites(self) -> dict[str, int]:
+        """获取当前登录用户的所有创建收藏夹，返回 {收藏夹名称: media_id}"""
+        if not self.mid:
+            self.test_login()
+        if not self.mid:
+            self.logger.warning("未获取到当前用户 mid，无法获取收藏夹列表")
+            return {}
+        params = {"up_mid": self.mid}
+        data = self._api_get(
+            "https://api.bilibili.com/x/v3/fav/folder/created/list-all",
+            params=params,
+            headers={"Referer": f"https://space.bilibili.com/{self.mid}/favlist"},
+            timeout=10,
+        )
+        folders = data.get("list") or []
+        return {item["title"]: item["id"] for item in folders if "title" in item and "id" in item}
+
+    def iter_favorite_videos(self, folder_name: str, media_id: int, max_pages: int = 1):
+        """分页遍历收藏夹中的视频"""
+        for page in range(1, max_pages + 1):
+            params = {
+                "media_id": media_id,
+                "pn": page,
+                "ps": 20,
+                "order": "mtime",
+                "type": 0,
+                "tid": 0,
+                "platform": "web",
+            }
+            try:
+                data = self._api_get(
+                    "https://api.bilibili.com/x/v3/fav/resource/list",
+                    params=params,
+                    headers={"Referer": f"https://space.bilibili.com/{self.mid}/favlist"},
+                    timeout=10,
+                )
+            except Exception as exc:
+                self.logger.error("获取收藏夹【%s】(id=%s) 第 %s 页失败: %s", folder_name, media_id, page, exc)
+                break
+
+            medias = data.get("medias") or []
+            if not medias:
+                break
+
+            for item in medias:
+                bvid = item.get("bvid") or item.get("bv_id")
+                if not bvid:
+                    continue
+                aid = item.get("id")
+                upper = item.get("upper") or {}
+                info = {
+                    "bvid": str(bvid),
+                    "aid": int(aid) if aid else None,
+                    "title": str(item.get("title", "")),
+                    "duration": int(item.get("duration", 0)),
+                    "up_name": str(upper.get("name", "")),
+                    "up_mid": int(upper.get("mid")) if upper.get("mid") else None,
+                    "pubdate": item.get("pubtime"),
+                    "source_url": f"https://www.bilibili.com/video/{bvid}",
+                    "source_type": "favorite",
+                    "source_name": folder_name,
+                    "favorite_media_id": media_id,
+                }
+                yield info
+
+            if not data.get("has_more"):
+                break
+
+    def delete_from_favorite(self, media_id: int, aid: int) -> bool:
+        """从指定收藏夹中删除视频 (aid)"""
+        csrf = self.session.cookies.get("bili_jct", "")
+        if not csrf:
+            self.logger.error("未找到 Bilibili bili_jct (CSRF Token)，无法执行从收藏夹删除")
+            return False
+        payload = {
+            "resources": f"{aid}:2",
+            "media_id": media_id,
+            "csrf": csrf,
+        }
+        headers = {
+            "Referer": f"https://space.bilibili.com/{self.mid}/favlist",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        try:
+            res = self._request(
+                "POST",
+                "https://api.bilibili.com/x/v3/fav/resource/batch-del",
+                data=payload,
+                headers=headers,
+                timeout=10,
+            )
+            res.raise_for_status()
+            result = res.json()
+            if result.get("code") == 0:
+                self.logger.info("已成功从收藏夹 (id=%s) 移除视频 aid=%s", media_id, aid)
+                return True
+            else:
+                self.logger.error(
+                    "从收藏夹 (id=%s) 移除视频 aid=%s 失败: code=%s, msg=%s",
+                    media_id,
+                    aid,
+                    result.get("code"),
+                    result.get("message"),
+                )
+                return False
+        except Exception as exc:
+            self.logger.error("从收藏夹 (id=%s) 移除视频 aid=%s 请求异常: %s", media_id, aid, exc)
+            return False
+
     def get_following_groups(self) -> dict:
         data = self._api_get("https://api.bilibili.com/x/relation/tags", timeout=10)
         return {item["tagid"]: {"name": item["name"], "count": item["count"]} for item in data}

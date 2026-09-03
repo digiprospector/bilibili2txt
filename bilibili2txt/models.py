@@ -33,6 +33,9 @@ class Task:
     failed_at: str | None = None
     failed_by: str | None = None
     client_retries: int = 0
+    source_type: str = "group"
+    source_name: str | None = None
+    favorite_media_id: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
@@ -57,6 +60,9 @@ class Task:
             failed_at=data.get("failed_at"),
             failed_by=data.get("failed_by"),
             client_retries=int(data.get("client_retries") or 0),
+            source_type=str(data.get("source_type") or "group"),
+            source_name=data.get("source_name"),
+            favorite_media_id=_optional_int(data.get("favorite_media_id")),
         )
 
     @classmethod
@@ -75,6 +81,9 @@ class Task:
             source_url=str(info.get("source_url") or f"https://www.bilibili.com/video/{bvid}"),
             created_at=now_iso(),
             aid=info.get("aid"),
+            source_type=str(info.get("source_type") or "group"),
+            source_name=info.get("source_name"),
+            favorite_media_id=_optional_int(info.get("favorite_media_id")),
         )
 
     @classmethod

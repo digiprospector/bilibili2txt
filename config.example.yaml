@@ -23,6 +23,8 @@ site:
 bilibili:
   target_groups:
     - 默认分组
+  target_favorites:
+    - 稍后再看  # 收藏夹名称列表：已处理的自动移出，未处理的完成总结后移出
   request_interval: 3
   scrape_duration_max: 7200
 

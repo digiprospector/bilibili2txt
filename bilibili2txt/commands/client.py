@@ -30,16 +30,19 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
     groups = args.group if args.group else None
     scrape_duration_max = int(ctx.config.get("bilibili.scrape_duration_max", 7200))
 
-    created = 0
-    skipped = 0
+    group_created = 0
+    group_skipped = 0
+
+    # 1. 扫描关注 UP 主群组
     for info in service.iter_target_videos(args.up_mid, groups=groups, max_pages=max_pages):
         bvid = str(info["bvid"])
         if db.video_exists(bvid):
             logger.debug("跳过已存在的视频: %s", bvid)
-            skipped += 1
+            group_skipped += 1
             continue
 
         info.update(service.get_video_detail(bvid=bvid))
+        info["source_type"] = "group"
         task = Task.from_bilibili_info(info)
         if task.duration > scrape_duration_max:
             task.status = "too_long"
@@ -57,10 +60,102 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
         db.upsert_video(task)
         db.upsert_task(task, path, "local")
         logger.info("已创建任务: %s status=%s duration=%s path=%s", task.task_id, task.status, task.duration, path)
-        created += 1
+        group_created += 1
 
-    logger.info("扫描总结: 已创建=%s 已跳过=%s", created, skipped)
-    ctx.extra["scan_stats"] = {"created": created, "skipped": skipped}
+    # 2. 扫描配置的收藏夹
+    fav_created = 0
+    fav_skipped = 0
+    fav_deleted_existing = 0
+
+    target_favorites = ctx.config.get("bilibili.target_favorites", []) or []
+    if isinstance(target_favorites, str):
+        target_favorites = [target_favorites]
+
+    if target_favorites and not args.up_mid:
+        user_favorites = service.get_user_favorites()
+        for folder_name in target_favorites:
+            if folder_name not in user_favorites:
+                logger.warning("未找到配置的收藏夹：%s", folder_name)
+                continue
+            media_id = user_favorites[folder_name]
+            logger.info("扫描收藏夹：%s (media_id=%s)", folder_name, media_id)
+            for fav_info in service.iter_favorite_videos(folder_name, media_id, max_pages=max_pages):
+                bvid = str(fav_info["bvid"])
+                aid = fav_info.get("aid")
+
+                # 如果 sqlite 中已经记录处理过该视频，直接从收藏夹删除，不再处理
+                if db.video_exists(bvid):
+                    logger.info("[收藏夹: %s] 视频已存在于数据库，跳过处理并准备从收藏夹删除: %s", folder_name, bvid)
+                    fav_skipped += 1
+                    if not aid:
+                        try:
+                            detail = service.get_video_detail(bvid=bvid)
+                            aid = detail.get("aid")
+                        except Exception as e:
+                            logger.warning("获取视频 %s aid 失败: %s", bvid, e)
+
+                    if aid and service.delete_from_favorite(media_id, aid):
+                        logger.info("[收藏夹: %s] 已成功从收藏夹删除已处理视频: %s (aid=%s)", folder_name, bvid, aid)
+                        fav_deleted_existing += 1
+                    else:
+                        logger.warning("[收藏夹: %s] 从收藏夹删除已处理视频失败: %s (aid=%s)", folder_name, bvid, aid)
+                    continue
+
+                # 未处理的新视频：获取详细信息并创建任务
+                try:
+                    detail = service.get_video_detail(bvid=bvid)
+                    fav_info.update(detail)
+                except Exception as e:
+                    logger.warning("获取收藏夹视频 %s 详情失败: %s", bvid, e)
+
+                fav_info["source_type"] = "favorite"
+                fav_info["source_name"] = folder_name
+                fav_info["favorite_media_id"] = media_id
+                task = Task.from_bilibili_info(fav_info)
+                if task.duration > scrape_duration_max:
+                    task.status = "too_long"
+
+                for old_file in output_dir.glob(f"*_{bvid}.json"):
+                    try:
+                        old_file.unlink()
+                        logger.info("已删除 %s 的旧任务文件: %s", bvid, old_file)
+                    except Exception as e:
+                        logger.warning("删除旧任务文件 %s 失败: %s", old_file, e)
+
+                path = output_dir / task.filename
+                task.write_json(path)
+                db.upsert_video(task)
+                db.upsert_task(task, path, "local")
+                db.upsert_favorite_task(task.bvid, task.aid, media_id, folder_name)
+                logger.info(
+                    "[收藏夹: %s] 已创建任务: %s status=%s duration=%s path=%s",
+                    folder_name,
+                    task.task_id,
+                    task.status,
+                    task.duration,
+                    path,
+                )
+                fav_created += 1
+
+    total_created = group_created + fav_created
+    total_skipped = group_skipped + fav_skipped
+    logger.info(
+        "扫描总结: UP主新建=%s 跳过=%s | 收藏夹新建=%s 已存在直接删除=%s | 总新建=%s 总跳过=%s",
+        group_created,
+        group_skipped,
+        fav_created,
+        fav_deleted_existing,
+        total_created,
+        total_skipped,
+    )
+    ctx.extra["scan_stats"] = {
+        "created": total_created,
+        "skipped": total_skipped,
+        "group_created": group_created,
+        "group_skipped": group_skipped,
+        "fav_created": fav_created,
+        "fav_deleted_existing": fav_deleted_existing,
+    }
     return 0
 
 
@@ -522,6 +617,67 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0 if failed == 0 else 1
 
 
+def clean_finished_favorites(
+    ctx: CommandContext,
+    service: BilibiliService | None = None,
+    logger: logging.Logger | None = None,
+) -> int:
+    """清理已成功生成 Markdown 总结笔记的收藏夹视频"""
+    logger = logger or logging.getLogger("bilibili2txt")
+    db = ctx.database()
+    pending = db.get_pending_favorite_tasks()
+    if not pending:
+        logger.debug("没有待清理的收藏夹已完成任务")
+        ctx.extra["fav_clean_stats"] = {"deleted": 0, "failed": 0}
+        return 0
+
+    if service is None:
+        service = BilibiliService(ctx.config, logger)
+        if not service.login():
+            logger.error("Bilibili 登录失败，无法清理收藏夹")
+            return 1
+
+    logger.info("====== clean-finished-favorites ======")
+    deleted_count = 0
+    failed_count = 0
+    for item in pending:
+        bvid = item["bvid"]
+        aid = item.get("aid")
+        media_id = item["media_id"]
+        folder_name = item.get("folder_name", "")
+        md_file = item.get("markdown_file")
+
+        if md_file and not Path(md_file).exists():
+            logger.warning("任务 %s 对应的 Markdown 文件不存在 (%s)，暂不删除", bvid, md_file)
+            continue
+
+        if not aid:
+            try:
+                detail = service.get_video_detail(bvid=bvid)
+                aid = detail.get("aid")
+            except Exception as e:
+                logger.warning("获取视频 %s aid 失败: %s", bvid, e)
+
+        if not aid:
+            logger.error("无法获取任务 %s 的 aid，跳过从收藏夹删除", bvid)
+            db.mark_favorite_delete_failed(bvid, "缺少 aid")
+            failed_count += 1
+            continue
+
+        if service.delete_from_favorite(media_id, aid):
+            db.mark_favorite_deleted(bvid)
+            logger.info("[收藏夹清理] 成功从【%s】移出已完成视频: %s (aid=%s)", folder_name, bvid, aid)
+            deleted_count += 1
+        else:
+            db.mark_favorite_delete_failed(bvid, "API 删除失败")
+            logger.error("[收藏夹清理] 从【%s】移出视频失败: %s (aid=%s)", folder_name, bvid, aid)
+            failed_count += 1
+
+    logger.info("收藏夹清理总结: 成功移出=%s 失败=%s", deleted_count, failed_count)
+    ctx.extra["fav_clean_stats"] = {"deleted": deleted_count, "failed": failed_count}
+    return 0 if failed_count == 0 else 1
+
+
 def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
     db = ctx.database()
     ai = AIService(ctx.config, logger)
@@ -575,6 +731,13 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     logger.info("渲染总结: 成功=%s 跳过=%s 失败=%s", succeeded, skipped, failed)
     ctx.extra["render_stats"] = {"succeeded": succeeded, "skipped": skipped, "failed": failed}
+
+    # 尝试清理已完成 Markdown 总结的收藏夹视频
+    try:
+        clean_finished_favorites(ctx, None, logger)
+    except Exception as e:
+        logger.warning("执行收藏夹清理异常: %s", e)
+
     return 0 if failed == 0 else 1
 
 
@@ -822,7 +985,8 @@ def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger,
 
     scan_stats = ctx.extra.get("scan_stats")
     if scan_stats:
-        lines.append(f"- **扫描视频**: 新增 {scan_stats['created']} 个，跳过 {scan_stats['skipped']} 个")
+        fav_del_msg = f"，收藏夹已处理直接移出 {scan_stats['fav_deleted_existing']} 个" if scan_stats.get("fav_deleted_existing") else ""
+        lines.append(f"- **扫描视频**: 新增 {scan_stats['created']} 个，跳过 {scan_stats['skipped']} 个{fav_del_msg}")
 
     prepare_stats = ctx.extra.get("prepare_stats")
     if prepare_stats:
@@ -839,6 +1003,11 @@ def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger,
     render_stats = ctx.extra.get("render_stats")
     if render_stats:
         lines.append(f"- **总结生成**: 成功 {render_stats['succeeded']} 个，跳过 {render_stats['skipped']} 个，失败 {render_stats['failed']} 个")
+
+    fav_clean_stats = ctx.extra.get("fav_clean_stats")
+    if fav_clean_stats and (fav_clean_stats.get("deleted") or fav_clean_stats.get("failed")):
+        del_fail_str = f"，失败 {fav_clean_stats['failed']} 个" if fav_clean_stats.get("failed") else ""
+        lines.append(f"- **收藏夹清理**: 移出 {fav_clean_stats['deleted']} 个已完成视频{del_fail_str}")
 
     sync_stats = ctx.extra.get("sync_stats")
     if sync_stats:

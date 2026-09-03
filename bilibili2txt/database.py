@@ -47,6 +47,18 @@ CREATE TABLE IF NOT EXISTS rendered_files (
     rendered_at TEXT,
     PRIMARY KEY (bvid, text_file)
 );
+
+CREATE TABLE IF NOT EXISTS favorite_tasks (
+    bvid TEXT PRIMARY KEY,
+    aid INTEGER,
+    media_id INTEGER NOT NULL,
+    folder_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    deleted_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (bvid) REFERENCES videos(bvid)
+);
 """
 
 MAIN_VIDEO_COLUMNS = {
@@ -202,6 +214,58 @@ class ClientDatabase:
                     error,
                     now_iso(),
                 ),
+            )
+
+    def upsert_favorite_task(self, bvid: str, aid: int | None, media_id: int, folder_name: str) -> None:
+        now = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO favorite_tasks (
+                    bvid, aid, media_id, folder_name, status, created_at
+                )
+                VALUES (?, ?, ?, ?, 'pending', ?)
+                ON CONFLICT(bvid) DO UPDATE SET
+                    aid=COALESCE(excluded.aid, favorite_tasks.aid),
+                    media_id=excluded.media_id,
+                    folder_name=excluded.folder_name
+                """,
+                (bvid, aid, media_id, folder_name, now),
+            )
+
+    def get_pending_favorite_tasks(self) -> list[dict[str, Any]]:
+        """获取所有已成功渲染 (rendered_files.render_status='success') 且待从收藏夹删除的记录"""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT f.bvid, f.aid, f.media_id, f.folder_name, r.markdown_file
+                FROM favorite_tasks f
+                JOIN rendered_files r ON f.bvid = r.bvid
+                WHERE f.status != 'deleted' AND r.render_status = 'success'
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_favorite_deleted(self, bvid: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE favorite_tasks
+                SET status = 'deleted', deleted_at = ?, last_error = NULL
+                WHERE bvid = ?
+                """,
+                (now_iso(), bvid),
+            )
+
+    def mark_favorite_delete_failed(self, bvid: str, error: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE favorite_tasks
+                SET status = 'failed', last_error = ?
+                WHERE bvid = ?
+                """,
+                (error, bvid),
             )
 
 

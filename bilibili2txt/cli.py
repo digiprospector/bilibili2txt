@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import CommandContext, ConfigError, load_config
 from .commands.init import data as init_data, queue as init_queue, site as init_site, InitError
-from .commands.client import add as client_add, collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
+from .commands.client import add as client_add, clean_finished_favorites as client_clean_finished_favorites, collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
 from .commands.hugo import (
     init as hugo_init,
     sync as hugo_sync,
@@ -105,6 +105,7 @@ COMMANDS = {
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
         ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN, ARG_SKIP_ENV_CHECK]),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
+        ("clean-favorites", client_clean_finished_favorites, []),
         ("finish", client_finish, [ARG_MESSAGE]),
     ],
     "server": [
