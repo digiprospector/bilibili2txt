@@ -307,7 +307,8 @@ def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
     min_duration = int(args.min_duration or ctx.config.get("client.local_download_audio_seconds", 1800))
-    queue = GitQueue(ctx.config.queue_dir, logger)
+    git_timeout = int(ctx.config.get("queue.git_timeout", 30))
+    queue = GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
     audio = AudioService(ctx.config, logger)
 
     queue.ensure_layout()
@@ -771,7 +772,8 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
     # 3. 测试 Git Pull
     logger.info("--- 测试 Git Pull ---")
     try:
-        queue = GitQueue(ctx.config.queue_dir, logger)
+        git_timeout = int(ctx.config.get("queue.git_timeout", 30))
+        queue = GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
         queue.ensure_layout()
         logger.info("正在对 %s 执行 git pull (sync)...", ctx.config.queue_dir)
         queue.sync(max_retries=1)
@@ -816,9 +818,34 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 return _finish_run(scan_code, "扫描失败或无新视频")
 
         logger.info("====== prepare-audio ======")
-        prepare_code = prepare_audio(ctx, args, logger)
-        if prepare_code != 0:
-            logger.warning("prepare-audio 返回代码=%s；继续提交因为服务端自身也可以下载", prepare_code)
+        max_prepare_attempts = 5
+        prepare_code = 0
+        for attempt in range(1, max_prepare_attempts + 1):
+            if attempt > 1:
+                logger.info("====== prepare-audio (第 %d/%d 次尝试) ======", attempt, max_prepare_attempts)
+            prepare_code = prepare_audio(ctx, args, logger)
+            if prepare_code == 0:
+                break
+
+            prepare_stats = ctx.extra.get("prepare_stats", {})
+            succeeded = prepare_stats.get("succeeded", 0)
+
+            if succeeded == 0:
+                logger.error("prepare-audio 返回代码=%s 且成功数量为 0，终止运行", prepare_code)
+                return _finish_run(prepare_code, "音频准备失败且成功数量为0")
+
+            if attempt < max_prepare_attempts:
+                logger.warning(
+                    "prepare-audio 返回代码=%s，但成功数量为 %d，准备再次尝试 (第 %d/%d 次)...",
+                    prepare_code, succeeded, attempt + 1, max_prepare_attempts
+                )
+                time.sleep(2)
+            else:
+                logger.error(
+                    "prepare-audio 已尝试 %d 次仍未全部成功 (返回代码=%s)，终止运行",
+                    max_prepare_attempts, prepare_code
+                )
+                return _finish_run(prepare_code, f"音频准备尝试达到上限({max_prepare_attempts}次)仍有失败")
 
         logger.info("====== submit ======")
         submit_code = submit(ctx, args, logger)
@@ -977,7 +1004,8 @@ def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger,
 
 
 def _wait_for_queue_completion(ctx: CommandContext, args, logger: logging.Logger) -> None:
-    queue = GitQueue(ctx.config.queue_dir, logger)
+    git_timeout = int(ctx.config.get("queue.git_timeout", 30))
+    queue = GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
     interval = int(ctx.config.get("client.wait_interval_seconds", 60))
     timeout = int(ctx.config.get("client.wait_timeout_seconds", 0))
     start = time.time()

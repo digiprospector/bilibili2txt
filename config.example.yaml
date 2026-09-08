@@ -12,6 +12,7 @@ queue:
   results_dir: results
   done_dir: done
   failed_dir: failed
+  git_timeout: 30  # Git 同步操作超时时间(秒)，默认 30
 
 site:
   repo_dir: site

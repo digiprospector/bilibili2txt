@@ -18,9 +18,10 @@ class QueueError(RuntimeError):
 
 
 class GitQueue:
-    def __init__(self, repo_dir: Path, logger: logging.Logger):
+    def __init__(self, repo_dir: Path, logger: logging.Logger, git_timeout: int = 30):
         self.repo_dir = repo_dir
         self.logger = logger
+        self.git_timeout = git_timeout
 
     @property
     def pending_dir(self) -> Path:
@@ -53,16 +54,25 @@ class GitQueue:
     def repo(self) -> git.Repo:
         return open_repo(self.repo_dir, QueueError)
 
-    def sync(self, max_retries: int | None = 3, retry_delay: int = 5) -> None:
+    def sync(self, max_retries: int | None = 3, retry_delay: int = 5, timeout: int | None = None) -> None:
         import time
+        timeout = timeout if timeout is not None else self.git_timeout
         repo = self.repo()
-        self.logger.info("同步队列仓库：%s", self.repo_dir)
+        self.logger.info("同步队列仓库：%s (超时=%ss)", self.repo_dir, timeout)
 
-        # 1. 确保本地工作区是干净的，配置 pull.rebase 为 true
+        # 1. 确保本地工作区是干净的，配置 pull.rebase 为 true，设置网络超时参数
         try:
             repo.git.reset("--hard", "HEAD")
             repo.git.clean("-fd")
             repo.git.config("pull.rebase", "true")
+            repo.git.config("http.lowSpeedLimit", "1000")
+            repo.git.config("http.lowSpeedTime", str(timeout))
+            ssh_cmd = f"ssh -o ConnectTimeout={timeout} -o ServerAliveInterval=15 -o ServerAliveCountMax=2"
+            try:
+                if not repo.git.config("--get", "core.sshCommand"):
+                    repo.git.config("core.sshCommand", ssh_cmd)
+            except Exception:
+                repo.git.config("core.sshCommand", ssh_cmd)
         except Exception as exc:
             self.logger.warning("初始化清理队列仓库或配置 pull.rebase 失败：%s", exc)
 
@@ -72,7 +82,7 @@ class GitQueue:
             attempt += 1
             try:
                 origin = self._origin(repo)
-                fetch_infos = origin.pull()
+                fetch_infos = origin.pull(kill_after_timeout=timeout)
                 # 检查 FetchInfo 结果：gitpython 有时在网络故障时不抛异常
                 # 但会返回带有 ERROR flag 的 FetchInfo 对象
                 error_flags = getattr(git.FetchInfo, "ERROR", 0x100)
@@ -101,7 +111,7 @@ class GitQueue:
                         repo.git.rebase("--abort")
                     except Exception:
                         pass
-                    origin.fetch()
+                    origin.fetch(kill_after_timeout=timeout, prune=True)
                     active_branch = repo.active_branch.name
                     repo.git.reset("--hard", f"origin/{active_branch}")
                     repo.git.clean("-fd")
@@ -121,7 +131,7 @@ class GitQueue:
         try:
             origin = self._origin(repo)
             commit_all(repo, message, self.logger)
-            push_and_check(origin, QueueError)
+            push_and_check(origin, QueueError, kill_after_timeout=self.git_timeout)
         except QueueError:
             raise
         except Exception as exc:

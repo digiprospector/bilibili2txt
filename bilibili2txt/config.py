@@ -126,7 +126,8 @@ class CommandContext:
     def queue(self, logger: logging.Logger, *, sync: bool = True, max_retries: int | None = 3):
         from .services.gitqueue import GitQueue
 
-        q = GitQueue(self.config.queue_dir, logger)
+        git_timeout = int(self.config.get("queue.git_timeout", 30))
+        q = GitQueue(self.config.queue_dir, logger, git_timeout=git_timeout)
         q.ensure_layout()
         if sync:
             q.sync(max_retries=max_retries)

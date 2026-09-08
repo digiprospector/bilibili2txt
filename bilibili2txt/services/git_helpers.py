@@ -1,9 +1,94 @@
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import git
+
+_local = threading.local()
+
+
+def install_git_timeout_patch() -> None:
+    """在 Windows 下为 GitPython 启用进程级超时控制（kill_after_timeout）。
+
+    GitPython 原生在 Windows 上禁用了 kill_after_timeout，遇到网络挂起会无限阻塞。
+    本补丁通过 Windows 的 taskkill /F /T 终止超时进程树。
+    """
+    if sys.platform != "win32" or getattr(git.cmd.Git, "_timeout_patched", False):
+        return
+
+    orig_execute = git.cmd.Git.execute
+    orig_safer_popen = git.cmd.safer_popen
+
+    def custom_safer_popen(*p_args, **p_kwargs):
+        proc = orig_safer_popen(*p_args, **p_kwargs)
+        setup_fn = getattr(_local, "watchdog_setup", None)
+        if setup_fn:
+            setup_fn(proc)
+        return proc
+
+    git.cmd.safer_popen = custom_safer_popen
+
+    def patched_execute(self, command, *args, **kwargs):
+        kill_after_timeout = kwargs.get("kill_after_timeout")
+        if kill_after_timeout is not None:
+            kwargs["kill_after_timeout"] = None
+            timeout = float(kill_after_timeout)
+
+            watchdog = None
+            kill_check = threading.Event()
+
+            def watchdog_setup(proc):
+                nonlocal watchdog
+
+                def kill_proc_tree(pid: int) -> None:
+                    try:
+                        kill_check.set()
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(pid)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    except Exception:
+                        pass
+
+                watchdog = threading.Timer(timeout, kill_proc_tree, args=(proc.pid,))
+                watchdog.daemon = True
+                watchdog.start()
+
+            _local.watchdog_setup = watchdog_setup
+            try:
+                try:
+                    result = orig_execute(self, command, *args, **kwargs)
+                except git.GitCommandError:
+                    if kill_check.is_set():
+                        raise git.GitCommandError(
+                            command,
+                            f'Timeout: Git 命令在 {timeout} 秒内未完成，已强制终止。',
+                        ) from None
+                    raise
+                if kill_check.is_set():
+                    raise git.GitCommandError(
+                        command,
+                        f'Timeout: Git 命令在 {timeout} 秒内未完成，已强制终止。',
+                    )
+                return result
+            finally:
+                _local.watchdog_setup = None
+                if watchdog:
+                    watchdog.cancel()
+
+        return orig_execute(self, command, *args, **kwargs)
+
+    git.cmd.Git.execute = patched_execute
+    git.cmd.Git._timeout_patched = True
+
+
+install_git_timeout_patch()
 
 
 def open_repo(repo_dir: Path, error_cls: type[Exception] = RuntimeError) -> git.Repo:
@@ -23,8 +108,8 @@ def commit_all(repo: git.Repo, message: str, logger: logging.Logger) -> bool:
     return True
 
 
-def push_and_check(origin, error_cls: type[Exception] = RuntimeError) -> None:
-    push_infos = origin.push()
+def push_and_check(origin, error_cls: type[Exception] = RuntimeError, kill_after_timeout: float | None = None) -> None:
+    push_infos = origin.push(kill_after_timeout=kill_after_timeout)
     failures = [
         info.summary
         for info in push_infos
