@@ -786,8 +786,36 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
     return True
 
 
-def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    logger.info("客户端运行启动")
+CLIENT_STEPS = [
+    "scan",
+    "prepare-audio",
+    "submit",
+    "wait",
+    "collect",
+    "render",
+    "sync",
+    "finish",
+]
+
+STEP_ALIASES = {
+    "scan": "scan",
+    "prepare": "prepare-audio",
+    "prepare-audio": "prepare-audio",
+    "prepare_audio": "prepare-audio",
+    "audio": "prepare-audio",
+    "submit": "submit",
+    "wait": "wait",
+    "wait-for-queue": "wait",
+    "wait_for_queue": "wait",
+    "collect": "collect",
+    "render": "render",
+    "sync": "sync",
+    "finish": "finish",
+}
+
+
+def run_pipeline(ctx: CommandContext, args, logger: logging.Logger, from_step: str | None = None) -> int:
+    logger.info("客户端流水线运行启动")
     start_time = time.time()
 
     def _finish_run(code: int, error_msg: str | None = None) -> int:
@@ -800,99 +828,149 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return code
 
     try:
-        if not getattr(args, "skip_env_check", False):
+        raw_step = (
+            getattr(args, "from_step", None)
+            or getattr(args, "step_opt", None)
+            or getattr(args, "step", None)
+            or from_step
+            or "scan"
+        )
+        step_key = str(raw_step).strip().lower()
+        normalized_step = STEP_ALIASES.get(step_key)
+
+        if not normalized_step or normalized_step not in CLIENT_STEPS:
+            valid_steps = ", ".join(CLIENT_STEPS)
+            logger.error("无效的起始步骤: '%s'。可选步骤为: %s", raw_step, valid_steps)
+            return _finish_run(1, f"无效的起始步骤: '{raw_step}'")
+
+        start_index = CLIENT_STEPS.index(normalized_step)
+        steps_to_run = CLIENT_STEPS[start_index:]
+        logger.info("执行流水线: %s", " -> ".join(steps_to_run))
+
+        skip_env_check = getattr(args, "skip_env_check", False)
+        if not skip_env_check and normalized_step in ("scan", "prepare-audio"):
             if not env_check(ctx, logger):
                 logger.error("环境检查未通过，终止运行。")
                 return _finish_run(1, "环境检查未通过")
             logger.info("环境检查通过，继续执行客户端流程。")
         else:
-            logger.info("已设置 --skip-env-check，跳过环境检查")
-        if getattr(args, "skip_scan", False):
-            logger.info("已设置 --skip-scan，跳过扫描步骤")
-            scan_code = 0
-        else:
-            logger.info("====== scan ======")
-            scan_code = scan(ctx, args, logger)
-            if scan_code != 0:
-                logger.info("扫描未产生可运行的任务，或扫描失败。代码=%s", scan_code)
-                return _finish_run(scan_code, "扫描失败或无新视频")
-
-        logger.info("====== prepare-audio ======")
-        max_prepare_attempts = 5
-        prepare_code = 0
-        for attempt in range(1, max_prepare_attempts + 1):
-            if attempt > 1:
-                logger.info("====== prepare-audio (第 %d/%d 次尝试) ======", attempt, max_prepare_attempts)
-            prepare_code = prepare_audio(ctx, args, logger)
-            if prepare_code == 0:
-                break
-
-            prepare_stats = ctx.extra.get("prepare_stats", {})
-            succeeded = prepare_stats.get("succeeded", 0)
-
-            if succeeded == 0:
-                logger.error("prepare-audio 返回代码=%s 且成功数量为 0，终止运行", prepare_code)
-                return _finish_run(prepare_code, "音频准备失败且成功数量为0")
-
-            if attempt < max_prepare_attempts:
-                logger.warning(
-                    "prepare-audio 返回代码=%s，但成功数量为 %d，准备再次尝试 (第 %d/%d 次)...",
-                    prepare_code, succeeded, attempt + 1, max_prepare_attempts
-                )
-                time.sleep(2)
+            if skip_env_check:
+                logger.info("已设置 --skip-env-check，跳过环境检查")
             else:
-                logger.error(
-                    "prepare-audio 已尝试 %d 次仍未全部成功 (返回代码=%s)，终止运行",
-                    max_prepare_attempts, prepare_code
-                )
-                return _finish_run(prepare_code, f"音频准备尝试达到上限({max_prepare_attempts}次)仍有失败")
+                logger.info("起始步骤为 %s，跳过耗时的前置环境检查", normalized_step)
 
-        logger.info("====== submit ======")
-        submit_code = submit(ctx, args, logger)
-        if submit_code != 0:
-            return _finish_run(submit_code, "任务提交失败")
+        # 1. scan
+        if "scan" in steps_to_run:
+            if getattr(args, "skip_scan", False):
+                logger.info("已设置 --skip-scan，跳过扫描步骤")
+            else:
+                logger.info("====== scan ======")
+                scan_code = scan(ctx, args, logger)
+                if scan_code != 0:
+                    logger.info("扫描未产生可运行的任务，或扫描失败。代码=%s", scan_code)
+                    return _finish_run(scan_code, "扫描失败或无新视频")
 
-        if not args.wait:
-            return _finish_run(0)
+        # 2. prepare-audio
+        if "prepare-audio" in steps_to_run:
+            logger.info("====== prepare-audio ======")
+            max_prepare_attempts = 5
+            prepare_code = 0
+            for attempt in range(1, max_prepare_attempts + 1):
+                if attempt > 1:
+                    logger.info("====== prepare-audio (第 %d/%d 次尝试) ======", attempt, max_prepare_attempts)
+                prepare_code = prepare_audio(ctx, args, logger)
+                if prepare_code == 0:
+                    break
 
-        logger.info("=== 开始执行 chrome_bookmark_manager ===")
-        try:
-            import sys
-            _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-            if str(_bookmark_dir) not in sys.path:
-                sys.path.insert(0, str(_bookmark_dir))
-            from chrome_bookmark_manager import manage_chrome
-            manage_chrome('open', logger)
-        except Exception as e:
-            logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
-        logger.info("=== chrome_bookmark_manager 执行完成 ===")
+                prepare_stats = ctx.extra.get("prepare_stats", {})
+                succeeded = prepare_stats.get("succeeded", 0)
 
-        logger.info("====== wait-for-queue-completion ======")
-        _wait_for_queue_completion(ctx, args, logger)
+                if attempt < max_prepare_attempts:
+                    logger.warning(
+                        "prepare-audio 返回代码=%s (当前成功数=%d)，准备再次尝试 (第 %d/%d 次)...",
+                        prepare_code,
+                        succeeded,
+                        attempt + 1,
+                        max_prepare_attempts,
+                    )
+                    time.sleep(3)
+                else:
+                    logger.error(
+                        "prepare-audio 已尝试 %d 次仍未全部成功 (返回代码=%s)，终止运行",
+                        max_prepare_attempts,
+                        prepare_code,
+                    )
+                    return _finish_run(prepare_code, f"音频准备尝试达到上限({max_prepare_attempts}次)仍有失败")
 
-        logger.info("=== 关闭已打开的 Chrome 窗口 ===")
-        try:
-            import sys
-            _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-            if str(_bookmark_dir) not in sys.path:
-                sys.path.insert(0, str(_bookmark_dir))
-            from chrome_bookmark_manager import manage_chrome
-            manage_chrome('close', logger)
-        except Exception as e:
-            logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
+        # 3. submit
+        if "submit" in steps_to_run:
+            logger.info("====== submit ======")
+            submit_code = submit(ctx, args, logger)
+            if submit_code != 0:
+                return _finish_run(submit_code, "任务提交失败")
 
-        logger.info("====== collect ======")
-        collect_code = collect(ctx, args, logger)
-        if collect_code != 0:
-            return _finish_run(collect_code, "结果收集失败")
+            if not getattr(args, "wait", True):
+                logger.info("已指定 --no-wait，任务提交后退出。")
+                return _finish_run(0)
 
-        logger.info("====== render ======")
-        render_code = render(ctx, args, logger)
+        # 4. wait
+        if "wait" in steps_to_run:
+            logger.info("=== 开始执行 chrome_bookmark_manager ===")
+            try:
+                import sys
+                _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+                if str(_bookmark_dir) not in sys.path:
+                    sys.path.insert(0, str(_bookmark_dir))
+                from chrome_bookmark_manager import manage_chrome
+                manage_chrome('open', logger)
+            except Exception as e:
+                logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
+            logger.info("=== chrome_bookmark_manager 执行完成 ===")
 
-        logger.info("====== sync ======")
-        sync_code = sync(ctx, args, logger)
+            logger.info("====== wait-for-queue-completion ======")
+            _wait_for_queue_completion(ctx, args, logger)
 
-        if render_code == 0 and sync_code == 0:
+            logger.info("=== 关闭已打开的 Chrome 窗口 ===")
+            try:
+                import sys
+                _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+                if str(_bookmark_dir) not in sys.path:
+                    sys.path.insert(0, str(_bookmark_dir))
+                from chrome_bookmark_manager import manage_chrome
+                manage_chrome('close', logger)
+            except Exception as e:
+                logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
+
+        # 5. collect
+        if "collect" in steps_to_run:
+            logger.info("====== collect ======")
+            collect_code = collect(ctx, args, logger)
+            if collect_code != 0:
+                return _finish_run(collect_code, "结果收集失败")
+
+        # 6. render
+        render_code = 0
+        if "render" in steps_to_run:
+            logger.info("====== render ======")
+            render_code = render(ctx, args, logger)
+
+        # 7. sync
+        sync_code = 0
+        if "sync" in steps_to_run:
+            logger.info("====== sync ======")
+            sync_code = sync(ctx, args, logger)
+
+        if "render" in steps_to_run or "sync" in steps_to_run:
+            if render_code != 0 or sync_code != 0:
+                err_steps = []
+                if render_code != 0:
+                    err_steps.append("生成总结")
+                if sync_code != 0:
+                    err_steps.append("同步网盘")
+                return _finish_run(1, f"步骤失败: {', '.join(err_steps)}")
+
+        # 8. finish
+        if "finish" in steps_to_run:
             logger.info("====== finish ======")
             finish_code = finish(ctx, args, logger)
             if finish_code == 0:
@@ -900,16 +978,19 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
             else:
                 return _finish_run(finish_code, "Git Push 备份失败")
 
-        err_steps = []
-        if render_code != 0:
-            err_steps.append("生成总结")
-        if sync_code != 0:
-            err_steps.append("同步网盘")
-        return _finish_run(1, f"步骤失败: {', '.join(err_steps)}")
+        return _finish_run(0)
 
     except Exception as exc:
         logger.exception("客户端运行出现异常: %s", exc)
         return _finish_run(1, f"运行异常: {exc}")
+
+
+def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    return run_pipeline(ctx, args, logger, from_step="scan")
+
+
+def resume(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    return run_pipeline(ctx, args, logger)
 
 
 def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger, success: bool, duration_str: str, error_msg: str | None = None) -> None:

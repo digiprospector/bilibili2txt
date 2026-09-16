@@ -7,7 +7,20 @@ from pathlib import Path
 
 from .config import CommandContext, ConfigError, load_config
 from .commands.init import data as init_data, queue as init_queue, site as init_site, InitError
-from .commands.client import add as client_add, clean_finished_favorites as client_clean_finished_favorites, collect as client_collect, finish as client_finish, prepare_audio as client_prepare_audio, render as client_render, resubmit_missing as client_resubmit_missing, run as client_run, scan as client_scan, submit as client_submit, sync as client_sync
+from .commands.client import (
+    add as client_add,
+    clean_finished_favorites as client_clean_finished_favorites,
+    collect as client_collect,
+    finish as client_finish,
+    prepare_audio as client_prepare_audio,
+    render as client_render,
+    resubmit_missing as client_resubmit_missing,
+    resume as client_resume,
+    run as client_run,
+    scan as client_scan,
+    submit as client_submit,
+    sync as client_sync,
+)
 from .commands.hugo import (
     init as hugo_init,
     sync as hugo_sync,
@@ -47,6 +60,9 @@ ARG_MIN_DURATION = (("-d", "--min-duration"), {})
 ARG_WAIT = (("-n", "--no-wait"), {"action": "store_false", "dest": "wait", "default": True, "help": "不等待任务完成直接退出"})
 ARG_SKIP_SCAN = (("-s", "--skip-scan"), {"action": "store_true", "help": "跳过扫描步骤"})
 ARG_SKIP_ENV_CHECK = (("--skip-env-check",), {"action": "store_true", "help": "跳过环境检查"})
+ARG_STEP_POS = ("step", {"nargs": "?", "default": None, "help": "从该步骤开始继续执行后续所有步骤（可选: scan, prepare-audio, submit, wait, collect, render, sync, finish）"})
+ARG_FROM_STEP = (("--from-step",), {"dest": "from_step", "default": None, "help": "从该步骤开始继续执行后续所有步骤"})
+ARG_STEP_OPT = (("--step",), {"dest": "step_opt", "default": None, "help": "从该步骤开始继续执行后续所有步骤（同 --from-step）"})
 ARG_SERVER_ID = (("-s", "--server-id"), {})
 ARG_MAX_DURATION = (("-d", "--max-duration"), {})
 ARG_CLAIM_TIMEOUT = (("-t", "--claim-timeout-minutes"), {})
@@ -78,6 +94,18 @@ _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOC
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
 _RENDER_ARGS = [ARG_FORCE, ARG_BVID]
 _HUGO_ARGS = [ARG_FORCE, ARG_BVID]
+_CLIENT_PIPELINE_ARGS = _SCAN_ARGS + [
+    ARG_INPUT,
+    ARG_MIN_DURATION,
+    ARG_WAIT,
+    ARG_FORCE,
+    ARG_BVID,
+    ARG_SKIP_SCAN,
+    ARG_SKIP_ENV_CHECK,
+    ARG_MESSAGE,
+    ARG_FROM_STEP,
+    ARG_STEP_OPT,
+]
 
 # ---------------------------------------------------------------------------
 # Command registry: role -> [(command_name, handler, [arg_specs])]
@@ -103,7 +131,8 @@ COMMANDS = {
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
-        ("run", client_run, _SCAN_ARGS + [ARG_INPUT, ARG_MIN_DURATION, ARG_WAIT, ARG_FORCE, ARG_BVID, ARG_SKIP_SCAN, ARG_SKIP_ENV_CHECK]),
+        ("run", client_run, _CLIENT_PIPELINE_ARGS),
+        ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
         ("clean-favorites", client_clean_finished_favorites, []),
         ("finish", client_finish, [ARG_MESSAGE]),
@@ -229,7 +258,8 @@ COMMAND_HELPS = {
         "collect": "从任务队列拉取已转写完成的 JSON 结果",
         "render": "将收集到的转写结果渲染并调用 AI 生成 Markdown 总结",
         "sync": "将生成的 Markdown 总结同步至网盘或指定归档目录",
-        "run": "一键自动执行上述整套本地客户端流程",
+        "run": "一键自动执行整套本地客户端流程（支持 --from-step 从指定步骤开始）",
+        "resume": "从指定步骤开始继续执行后续所有步骤（如 collect, render 等）",
         "resubmit-missing": "重新提交失败或丢失的任务至队列",
         "finish": "提交并推送本地 data 数据仓库中的所有更改至远程 Git 仓库备份",
     },

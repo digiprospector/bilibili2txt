@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import requests
@@ -49,6 +50,22 @@ class WebDavClient:
 
     def url_for(self, name: str) -> str:
         return f"{self.base_url}/{name}"
+
+    def get_remote_file_size(self, remote_name: str) -> int | None:
+        url = self.url_for(remote_name)
+        try:
+            resp = requests.head(
+                url,
+                auth=HTTPBasicAuth(self.username, self.password),
+                headers={"Accept-Encoding": "identity"},
+                timeout=15,
+                proxies=self.proxies,
+            )
+            if resp.status_code == 200 and "Content-Length" in resp.headers:
+                return int(resp.headers["Content-Length"])
+        except Exception:
+            pass
+        return None
 
     def list_files(self) -> set[str]:
         self.logger.info("获取 WebDAV 文件列表: %s", self.base_url)
@@ -196,22 +213,45 @@ class WebDavClient:
                 length = min(chunk_size, file_size - offset)
                 part_name = f"{remote_name}.part{part_idx:02d}"
                 part_url = self.url_for(part_name)
+
+                # 断点续传：检查分片是否已完整存在于 WebDAV 上
+                rem_size = self.get_remote_file_size(part_name)
+                if rem_size is not None and rem_size == length:
+                    self.logger.info("WebDAV 分片 %s 已存在且大小一致 (%d 字节)，跳过上传 (%d/%d)", part_name, rem_size, part_idx, total_parts)
+                    continue
+
                 self.logger.info("WebDAV 上传分片: %s (%d/%d) -> %s", part_name, part_idx, total_parts, part_url)
 
-                try:
-                    with ChunkSliceFileWrapper(local_path, offset, length) as slice_file:
-                        if show_progress:
-                            from tqdm import tqdm
+                max_part_retries = 3
+                part_uploaded = False
+                for retry_idx in range(1, max_part_retries + 1):
+                    try:
+                        with ChunkSliceFileWrapper(local_path, offset, length) as slice_file:
+                            desc_text = f"正在上传 {part_name} ({part_idx}/{total_parts})"
+                            if retry_idx > 1:
+                                desc_text += f" [重试 {retry_idx}/{max_part_retries}]"
 
-                            with tqdm(
-                                total=length,
-                                unit="B",
-                                unit_scale=True,
-                                unit_divisor=1024,
-                                desc=f"正在上传 {part_name} ({part_idx}/{total_parts})",
-                                leave=True,
-                            ) as pbar:
-                                slice_file.callback = pbar.update
+                            if show_progress:
+                                from tqdm import tqdm
+
+                                with tqdm(
+                                    total=length,
+                                    unit="B",
+                                    unit_scale=True,
+                                    unit_divisor=1024,
+                                    desc=desc_text,
+                                    leave=True,
+                                ) as pbar:
+                                    slice_file.callback = pbar.update
+                                    response = requests.put(
+                                        part_url,
+                                        data=slice_file,
+                                        auth=HTTPBasicAuth(self.username, self.password),
+                                        headers={"Content-Type": "application/octet-stream"},
+                                        timeout=300,
+                                        proxies=self.proxies,
+                                    )
+                            else:
                                 response = requests.put(
                                     part_url,
                                     data=slice_file,
@@ -220,22 +260,28 @@ class WebDavClient:
                                     timeout=300,
                                     proxies=self.proxies,
                                 )
-                        else:
-                            response = requests.put(
-                                part_url,
-                                data=slice_file,
-                                auth=HTTPBasicAuth(self.username, self.password),
-                                headers={"Content-Type": "application/octet-stream"},
-                                timeout=300,
-                                proxies=self.proxies,
-                            )
 
-                    if response.status_code not in (200, 201, 204):
-                        self.logger.error("WebDAV 分片 %s 上传失败 status=%s body=%s", part_name, response.status_code, response.text)
-                        return False
-                    self.logger.info("WebDAV 分片 %s 上传成功 (%d/%d)", part_name, part_idx, total_parts)
-                except Exception as exc:
-                    self.logger.error("WebDAV 分片 %s 上传失败: %s", part_name, exc)
+                        if response.status_code in (200, 201, 204):
+                            part_uploaded = True
+                            self.logger.info("WebDAV 分片 %s 上传成功 (%d/%d)", part_name, part_idx, total_parts)
+                            break
+                        else:
+                            self.logger.warning(
+                                "WebDAV 分片 %s 上传返回状态码 %s (重试 %d/%d): %s",
+                                part_name,
+                                response.status_code,
+                                retry_idx,
+                                max_part_retries,
+                                response.text,
+                            )
+                    except Exception as exc:
+                        self.logger.warning("WebDAV 分片 %s 上传异常 (重试 %d/%d): %s", part_name, retry_idx, max_part_retries, exc)
+
+                    if retry_idx < max_part_retries:
+                        time.sleep(2)
+
+                if not part_uploaded:
+                    self.logger.error("WebDAV 分片 %s 经 %d 次尝试仍上传失败", part_name, max_part_retries)
                     return False
 
             self.logger.info("文件全量分片上传成功: %s (共 %d 个分片)", remote_name, total_parts)
@@ -248,46 +294,56 @@ class WebDavClient:
         # 上传前清理可能残留的分片
         self._delete_parts(remote_name)
 
-        try:
-            with local_path.open("rb") as raw_file:
-                if show_progress:
-                    from tqdm import tqdm
+        max_retries = 3
+        for retry_idx in range(1, max_retries + 1):
+            try:
+                with local_path.open("rb") as raw_file:
+                    desc_text = f"正在上传 {local_path.name}"
+                    if retry_idx > 1:
+                        desc_text += f" [重试 {retry_idx}/{max_retries}]"
 
-                    with tqdm(
-                        total=file_size,
-                        unit="B",
-                        unit_scale=True,
-                        unit_divisor=1024,
-                        desc=f"正在上传 {local_path.name}",
-                        leave=True,
-                    ) as pbar:
-                        wrapped_file = CallbackFileWrapper(raw_file, pbar.update, file_size)
+                    if show_progress:
+                        from tqdm import tqdm
+
+                        with tqdm(
+                            total=file_size,
+                            unit="B",
+                            unit_scale=True,
+                            unit_divisor=1024,
+                            desc=desc_text,
+                            leave=True,
+                        ) as pbar:
+                            wrapped_file = CallbackFileWrapper(raw_file, pbar.update, file_size)
+                            response = requests.put(
+                                url,
+                                data=wrapped_file,
+                                auth=HTTPBasicAuth(self.username, self.password),
+                                headers={"Content-Type": "application/octet-stream"},
+                                timeout=300,
+                                proxies=self.proxies,
+                            )
+                    else:
                         response = requests.put(
                             url,
-                            data=wrapped_file,
+                            data=raw_file,
                             auth=HTTPBasicAuth(self.username, self.password),
                             headers={"Content-Type": "application/octet-stream"},
                             timeout=300,
                             proxies=self.proxies,
                         )
-                else:
-                    response = requests.put(
-                        url,
-                        data=raw_file,
-                        auth=HTTPBasicAuth(self.username, self.password),
-                        headers={"Content-Type": "application/octet-stream"},
-                        timeout=300,
-                        proxies=self.proxies,
-                    )
 
-            if response.status_code in (200, 201, 204):
-                self.logger.info("WebDAV 上传成功: %s", remote_name)
-                return True
-            self.logger.error("WebDAV 上传失败 status=%s body=%s", response.status_code, response.text)
-            return False
-        except Exception as exc:
-            self.logger.error("WebDAV 上传 %s 失败: %s", local_path, exc)
-            return False
+                if response.status_code in (200, 201, 204):
+                    self.logger.info("WebDAV 上传成功: %s", remote_name)
+                    return True
+                self.logger.warning("WebDAV 上传失败 status=%s body=%s (重试 %d/%d)", response.status_code, response.text, retry_idx, max_retries)
+            except Exception as exc:
+                self.logger.warning("WebDAV 上传 %s 异常 (重试 %d/%d): %s", local_path, retry_idx, max_retries, exc)
+
+            if retry_idx < max_retries:
+                time.sleep(2)
+
+        self.logger.error("WebDAV 上传 %s 失败（已尝试 %d 次）", local_path, max_retries)
+        return False
 
     def delete(self, remote_url_or_name: str) -> bool:
         url = remote_url_or_name if remote_url_or_name.startswith("http") else self.url_for(remote_url_or_name)

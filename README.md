@@ -141,6 +141,12 @@ python b2t.py client run
 
 # 仅提交任务并立即退出（不等待）
 python b2t.py client run --no-wait
+
+# 从某个步骤继续执行后续所有步骤（如从收集开始执行 collect -> render -> sync -> finish）
+python b2t.py client resume collect
+
+# 从渲染总结步骤继续执行（render -> sync -> finish）
+python b2t.py client resume render
 ```
 
 Server 远程转写节点：
