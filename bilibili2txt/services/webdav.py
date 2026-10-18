@@ -43,7 +43,7 @@ class WebDavClient:
             base_url=str(config.get("webdav.url")),
             username=str(config.get("webdav.username")),
             password=password,
-            proxy=config.get("webdav.proxy") or None,
+            proxy=config.get("client.proxy") or None,
             upload_split_size_mb=split_size_mb,
             logger=logger,
         )

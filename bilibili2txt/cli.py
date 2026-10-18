@@ -44,6 +44,7 @@ from .commands.admin import (
     webdav_upload as admin_webdav_upload,
 )
 from .commands.server import claim as server_claim, release_claimed as server_release_claimed, run as server_run, transcribe as server_transcribe, publish as server_publish, once as server_once
+from .commands.colab import run as colab_run, run_all as colab_run_all, status as colab_status, stop as colab_stop, login as colab_login, check as colab_check
 from .logging import log_command_finish, log_command_start, setup_logger
 
 
@@ -89,6 +90,7 @@ ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV �
 ARG_REASON = (("-r", "--reason"), {"default": "undownloadable", "help": "忽略原因（如 undownloadable, deleted, upower）"})
 ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
+ARG_ACCOUNT = (("-a", "--account"), {"help": "colab 账号名（对应 colab.accounts 配置）"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
@@ -144,6 +146,14 @@ COMMANDS = {
         ("once", server_once, _SERVER_ARGS),
         ("run", server_run, _SERVER_ARGS),
         ("release-claimed", server_release_claimed, _SERVER_ARGS),
+    ],
+    "colab": [
+        ("run", colab_run, [ARG_ACCOUNT]),
+        ("run-all", colab_run_all, []),
+        ("login", colab_login, [ARG_ACCOUNT]),
+        ("check", colab_check, [ARG_ACCOUNT]),
+        ("status", colab_status, [ARG_ACCOUNT]),
+        ("stop", colab_stop, [ARG_ACCOUNT]),
     ],
     "admin": [
         ("status", admin_status, [ARG_LIMIT]),
