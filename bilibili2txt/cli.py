@@ -44,7 +44,7 @@ from .commands.admin import (
     webdav_upload as admin_webdav_upload,
 )
 from .commands.server import claim as server_claim, release_claimed as server_release_claimed, run as server_run, transcribe as server_transcribe, publish as server_publish, once as server_once
-from .commands.colab import run as colab_run, run_all as colab_run_all, status as colab_status, stop as colab_stop, login as colab_login, check as colab_check
+from .commands.colab import run as colab_run, run_all as colab_run_all, status as colab_status, stop as colab_stop, login as colab_login
 from .logging import log_command_finish, log_command_start, setup_logger
 
 
@@ -151,7 +151,6 @@ COMMANDS = {
         ("run", colab_run, [ARG_ACCOUNT]),
         ("run-all", colab_run_all, []),
         ("login", colab_login, [ARG_ACCOUNT]),
-        ("check", colab_check, [ARG_ACCOUNT]),
         ("status", colab_status, [ARG_ACCOUNT]),
         ("stop", colab_stop, [ARG_ACCOUNT]),
     ],
@@ -281,6 +280,13 @@ COMMAND_HELPS = {
         "run": "后台循环运行认领、转写和发布流程",
         "release-claimed": "释放队列中指定服务节点超时过期的被占用任务",
     },
+    "colab": {
+        "run": "用指定 Google 账号创建 Colab session 并运行转写 notebook",
+        "run-all": "并发为所有配置账号启动 Colab session",
+        "login": "为指定账号执行 OAuth 登录并验证凭据",
+        "status": "查看指定账号或所有账号的 session 状态",
+        "stop": "停止指定账号的 Colab session",
+    },
     "admin": {
         "status": "显示当前任务队列状态和推荐处理命令",
         "check-missing": "检查是否存在已分配但未成功转写或存在遗漏的任务",
@@ -309,6 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
         "site": "Hugo 静态博客网站管理（Markdown 转换、本地预览、推送到 GitHub Pages 等）",
         "client": "客户端/本地控制端流程（扫描、提交、收集、渲染、同步等）",
         "server": "转写节点/服务端流程（认领、转写、发布等）",
+        "colab": "Colab 多账号管理（登录、启动、检查、停止 notebook）",
         "admin": "管理员工具（检查、重试、AI诊断、WebDAV清理等）",
     }
 

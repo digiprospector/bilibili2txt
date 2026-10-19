@@ -155,6 +155,35 @@ Server 远程转写节点：
 python b2t.py server run --server-id colab-a
 ```
 
+Colab 多账号管理（client 端通过 WSL 调用 `google-colab-cli`）：
+
+```bash
+# 为账号执行 OAuth 登录
+python b2t.py colab login --account account-a
+
+# 用单个账号启动 session 并运行 notebook
+python b2t.py colab run --account account-a
+
+# 并发启动配置中的所有账号
+python b2t.py colab run-all
+
+# 查看 session 状态
+python b2t.py colab status
+
+# 停止指定账号的 session
+python b2t.py colab stop --account account-a
+```
+
+每个账号对应 WSL 里的一个用户名，命令通过 `wsl.exe -u <name>` 切换用户执行，
+因此各账号的 `$HOME`、colab-cli 登录状态和 session 彼此隔离。账号列表优先读取
+`colab.accounts`（见 `config.example.yaml`），未配置时回退到
+`colab.bookmark_config` 中的 profile 名称。代理统一读取 `client.proxy`；
+`colab.command_timeout_seconds` 控制 `new`/`status`/`stop`/`whoami` 的超时
+（默认 30 秒，notebook 执行不限制）。
+
+每个 WSL 用户下只使用一个固定 session 名 `b2t`，`run`/`status`/`stop`/`login`
+都操作同一个 session，账号差异完全由 `wsl.exe -u` 的用户身份区分。
+
 Colab:
 
 ```text

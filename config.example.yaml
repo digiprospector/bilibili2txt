@@ -63,6 +63,11 @@ colab:
   gpu: T4
   notebook: notebooks/bilibili2txt_server_colab.ipynb
   bookmark_config: ../python_utils_private/open_chrome_bookmark_config.yaml
+  command_timeout_seconds: 30  # new/status/stop/whoami 的超时；notebook 执行不限制
+  # 每个账号是 WSL 里的一个用户名，通过 wsl.exe -u <name> 切换用户执行
+  accounts:
+    - name: account-a
+    - name: account-b
 
 ai:
   selected: example
