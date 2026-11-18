@@ -19,6 +19,7 @@ class WebDavClient:
         logger: logging.Logger,
         proxy: str | None = None,
         upload_split_size_mb: int = 50,
+        max_retries: int = 5,
     ):
         self.base_url = base_url.rstrip("/")
         self.username = username
@@ -27,6 +28,7 @@ class WebDavClient:
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.upload_split_size_mb = upload_split_size_mb
         self.split_size_bytes = upload_split_size_mb * 1024 * 1024 if upload_split_size_mb > 0 else 0
+        self.max_retries = max_retries
 
     @classmethod
     def from_config(cls, config: AppConfig, logger: logging.Logger) -> "WebDavClient":
@@ -39,12 +41,19 @@ class WebDavClient:
         except (TypeError, ValueError):
             split_size_mb = 50
 
+        max_retries = config.get("webdav.max_retries", 5)
+        try:
+            max_retries = int(max_retries)
+        except (TypeError, ValueError):
+            max_retries = 5
+
         return cls(
             base_url=str(config.get("webdav.url")),
             username=str(config.get("webdav.username")),
             password=password,
-            proxy=config.get("webdav.proxy") or None,
+            proxy=config.get("client.proxy") or None,
             upload_split_size_mb=split_size_mb,
+            max_retries=max_retries,
             logger=logger,
         )
 
@@ -190,9 +199,16 @@ class WebDavClient:
             self.logger.warning("WebDAV 从 %s 下载失败: %s", remote_name, exc)
             return False
 
-    def upload(self, local_path: Path, remote_name: str | None = None, show_progress: bool = False) -> bool:
+    def upload(
+        self,
+        local_path: Path,
+        remote_name: str | None = None,
+        show_progress: bool = False,
+        max_retries: int | None = None,
+    ) -> bool:
         remote_name = remote_name or local_path.name
         file_size = local_path.stat().st_size
+        retries = max_retries if max_retries is not None else self.max_retries
 
         if self.split_size_bytes > 0 and file_size > self.split_size_bytes:
             chunk_size = self.split_size_bytes
@@ -222,7 +238,7 @@ class WebDavClient:
 
                 self.logger.info("WebDAV 上传分片: %s (%d/%d) -> %s", part_name, part_idx, total_parts, part_url)
 
-                max_part_retries = 3
+                max_part_retries = retries
                 part_uploaded = False
                 for retry_idx in range(1, max_part_retries + 1):
                     try:
@@ -294,7 +310,7 @@ class WebDavClient:
         # 上传前清理可能残留的分片
         self._delete_parts(remote_name)
 
-        max_retries = 3
+        max_retries = retries
         for retry_idx in range(1, max_retries + 1):
             try:
                 with local_path.open("rb") as raw_file:

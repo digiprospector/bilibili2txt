@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS videos (
     source_url TEXT NOT NULL,
     video_status TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL
+    last_seen_at TEXT NOT NULL,
+    source_type TEXT DEFAULT 'group',
+    category TEXT DEFAULT '投资'
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -88,6 +90,12 @@ class ClientDatabase:
     def initialize(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            # 兼容旧数据库迁移
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(videos)").fetchall()}
+            if "source_type" not in cols:
+                conn.execute("ALTER TABLE videos ADD COLUMN source_type TEXT DEFAULT 'group'")
+            if "category" not in cols:
+                conn.execute("ALTER TABLE videos ADD COLUMN category TEXT DEFAULT '投资'")
 
     def video_exists(self, bvid: str) -> bool:
         with self.connect() as conn:
@@ -110,6 +118,8 @@ class ClientDatabase:
 
     def upsert_video(self, task: Task) -> None:
         now = now_iso()
+        category = getattr(task, "category", "投资") or "投资"
+        source_type = getattr(task, "source_type", "group") or "group"
         with self.connect() as conn:
             existing = conn.execute("SELECT first_seen_at FROM videos WHERE bvid = ?", (task.bvid,)).fetchone()
             first_seen = existing["first_seen_at"] if existing else now
@@ -117,9 +127,10 @@ class ClientDatabase:
                 """
                 INSERT INTO videos (
                     bvid, aid, cid, title, up_name, up_mid, pubdate, duration,
-                    source_url, video_status, first_seen_at, last_seen_at
+                    source_url, video_status, first_seen_at, last_seen_at,
+                    source_type, category
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(bvid) DO UPDATE SET
                     aid=excluded.aid,
                     cid=excluded.cid,
@@ -130,7 +141,9 @@ class ClientDatabase:
                     duration=excluded.duration,
                     source_url=excluded.source_url,
                     video_status=excluded.video_status,
-                    last_seen_at=excluded.last_seen_at
+                    last_seen_at=excluded.last_seen_at,
+                    source_type=excluded.source_type,
+                    category=excluded.category
                 """,
                 (
                     task.bvid,
@@ -145,8 +158,20 @@ class ClientDatabase:
                     task.status,
                     first_seen,
                     now,
+                    source_type,
+                    category,
                 ),
             )
+
+    def get_video_meta(self, bvid: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT source_type, category, title, up_name FROM videos WHERE bvid = ?",
+                (bvid,),
+            ).fetchone()
+            if row:
+                return dict(row)
+        return None
 
     def upsert_task(self, task: Task, task_file: Path | None, queue_state: str) -> None:
         with self.connect() as conn:

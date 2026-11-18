@@ -42,7 +42,15 @@ def parse_transcript_filename(path: Path) -> TranscriptMetadata | None:
     )
 
 
-def md_path_for(meta: TranscriptMetadata, markdown_root: Path, text_file: Path) -> Path:
+def md_path_for(
+    meta: TranscriptMetadata,
+    markdown_root: Path,
+    text_file: Path,
+    source_type: str = "group",
+    category: str = "投资",
+) -> Path:
+    if source_type == "manual":
+        return markdown_root / "manual" / category / meta.date_folder / text_file.with_suffix(".md").name
     return markdown_root / meta.date_folder / text_file.with_suffix(".md").name
 
 def adjust_heading_levels(summary: str) -> str:
@@ -65,10 +73,21 @@ def adjust_heading_levels(summary: str) -> str:
     return re.sub(r"(?m)^(#+)[ \t]+", replace_heading, summary)
 
 
-def build_markdown(meta: TranscriptMetadata, transcript: str, summary: str, ai_provider: str) -> str:
+def build_markdown(
+    meta: TranscriptMetadata,
+    transcript: str,
+    summary: str,
+    ai_provider: str,
+    source_type: str = "group",
+    category: str = "投资",
+) -> str:
     summary = adjust_heading_levels(summary)
+    source_label = "手动添加 (Manual)" if source_type == "manual" else "自动同步 (Auto)"
+    tag_source = "手动添加" if source_type == "manual" else "自动同步"
     return f"""# {meta.title}
 
+- **分类**: {category}
+- **来源**: {source_label}
 - **UP主**: {meta.up_name}
 - **BVID**: {meta.bvid}
 - **视频链接**: <https://www.bilibili.com/video/{meta.bvid}>
@@ -78,7 +97,7 @@ def build_markdown(meta: TranscriptMetadata, transcript: str, summary: str, ai_p
 
 ## tags
 
-
+#{category} #{tag_source}
 
 ## 总结
 

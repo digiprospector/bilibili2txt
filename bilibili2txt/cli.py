@@ -9,6 +9,7 @@ from .config import CommandContext, ConfigError, load_config
 from .commands.init import data as init_data, queue as init_queue, site as init_site, InitError
 from .commands.client import (
     add as client_add,
+    categories as client_categories,
     clean_finished_favorites as client_clean_finished_favorites,
     collect as client_collect,
     finish as client_finish,
@@ -70,7 +71,8 @@ ARG_KEEP_LOCAL = (("-k", "--keep-local-result"), {"action": "store_true"})
 ARG_MAX_TASKS = (("-m", "--max-tasks"), {})
 ARG_INTERVAL = (("-i", "--interval"), {})
 ARG_VIDEO = ("video", {})
-ARG_BVID_POS = ("bvid", {"help": "视频的 BV 号"})
+ARG_BVID_POS = ("bvid", {"help": "视频的 BV 号或 B 站视频链接"})
+ARG_CATEGORY = (("-c", "--category"), {"default": "投资", "help": "视频内容分类（如 投资、历史），默认为 投资"})
 ARG_MESSAGE = (("-m", "--message"), {})
 ARG_DRY_RUN = (("-d", "--dry-run"), {"action": "store_true"})
 ARG_FILE = ("file", {})
@@ -127,7 +129,8 @@ COMMANDS = {
         ("scan", client_scan, _SCAN_ARGS),
         ("submit", client_submit, [ARG_INPUT]),
         ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION, ARG_FORCE]),
-        ("add", client_add, [ARG_BVID_POS]),
+        ("add", client_add, [ARG_BVID_POS, ARG_CATEGORY]),
+        ("categories", client_categories, []),
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),

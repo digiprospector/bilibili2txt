@@ -32,7 +32,10 @@ class NetdiskSync:
         if not self.dest_root.parent.exists():
             raise RuntimeError(f"Netdisk root does not exist: {self.dest_root.parent}")
 
+        # 1. 同步根目录下的自动生成日期文件夹
         for day_dir in sorted(path for path in self.markdown_root.iterdir() if path.is_dir()):
+            if day_dir.name == "manual":
+                continue
             try:
                 file_date = date.fromisoformat(day_dir.name)
             except ValueError:
@@ -43,18 +46,45 @@ class NetdiskSync:
                     continue
                 dest = self.destination_for(file_date, md_file.name, today)
                 self._copy(md_file, dest, force, stats)
+
+        # 2. 同步 manual/{category}/{date} 手动分类目录
+        manual_root = self.markdown_root / "manual"
+        if manual_root.exists() and manual_root.is_dir():
+            for cat_dir in sorted(path for path in manual_root.iterdir() if path.is_dir()):
+                cat_dest_root = self.dest_root / "manual" / cat_dir.name
+                for day_dir in sorted(path for path in cat_dir.iterdir() if path.is_dir()):
+                    try:
+                        file_date = date.fromisoformat(day_dir.name)
+                    except ValueError:
+                        self.logger.info("跳过非日期格式的手动 markdown 目录：%s", day_dir)
+                        continue
+                    for md_file in day_dir.glob("*.md"):
+                        if bvid and bvid not in md_file.name:
+                            continue
+                        dest = self.destination_for(file_date, md_file.name, today, base_dest=cat_dest_root)
+                        self._copy(md_file, dest, force, stats)
+
         return stats
 
     def archive_previous_month(self, today: date, force: bool) -> int:
         first_this_month = today.replace(day=1)
         last_month_day = first_this_month - timedelta(days=1)
-        compact = self.dest_root / f"{last_month_day.year}-{last_month_day.month:02d}"
+        archived = self._archive_root_month(self.dest_root, last_month_day, force)
+
+        manual_dest = self.dest_root / "manual"
+        if manual_dest.exists() and manual_dest.is_dir():
+            for cat_dir in sorted(path for path in manual_dest.iterdir() if path.is_dir()):
+                archived += self._archive_root_month(cat_dir, last_month_day, force)
+
+        return archived
+
+    def _archive_root_month(self, base_root: Path, last_month_day: date, force: bool) -> int:
+        compact = base_root / f"{last_month_day.year}-{last_month_day.month:02d}"
         if not compact.exists():
-            self.logger.info("没有上个月的紧凑目录需要归档：%s", compact)
             return 0
         archived = 0
         for day_dir in sorted(path for path in compact.iterdir() if path.is_dir()):
-            target_day = self.dest_root / f"{last_month_day.year}" / f"{last_month_day.month:02d}" / day_dir.name
+            target_day = base_root / f"{last_month_day.year}" / f"{last_month_day.month:02d}" / day_dir.name
             for source in day_dir.glob("*.md"):
                 target = target_day / source.name
                 self._move(source, target, force)
@@ -62,11 +92,18 @@ class NetdiskSync:
         self._remove_empty_dirs(compact)
         return archived
 
-    def destination_for(self, file_date: date, filename: str, today: date) -> Path:
+    def destination_for(
+        self,
+        file_date: date,
+        filename: str,
+        today: date,
+        base_dest: Path | None = None,
+    ) -> Path:
+        dest_root = base_dest or self.dest_root
         clean_name = _strip_timestamp(filename)
         if file_date.year == today.year and file_date.month == today.month:
-            return self.dest_root / f"{file_date.year}-{file_date.month:02d}" / f"{file_date.day:02d}" / clean_name
-        return self.dest_root / f"{file_date.year}" / f"{file_date.month:02d}" / f"{file_date.day:02d}" / clean_name
+            return dest_root / f"{file_date.year}-{file_date.month:02d}" / f"{file_date.day:02d}" / clean_name
+        return dest_root / f"{file_date.year}" / f"{file_date.month:02d}" / f"{file_date.day:02d}" / clean_name
 
     def _copy(self, source: Path, target: Path, force: bool, stats: SyncStats) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)

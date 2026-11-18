@@ -13,6 +13,8 @@ from ..services.audio import AudioService
 from ..services.bilibili import BilibiliService
 from ..services.gitqueue import GitQueue
 from ..services.markdown import build_markdown, md_path_for, parse_transcript_filename
+from ..services.prompts import get_available_categories, get_category_names
+from ..services.video_id import parse_video_input
 from ..services.webdav import WebDavClient
 
 
@@ -155,10 +157,41 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0
 
 
+def categories(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    prompts_dir = ctx.config.data_dir / "prompts"
+    cats = get_available_categories(prompts_dir, logger)
+    print("\n当前系统支持的内容分类（Category）：")
+    print("-" * 60)
+    for cat in cats:
+        print(f"  • {cat.name} : {cat.description}")
+    print("-" * 60)
+    print("提示：在添加视频时可通过 --category <分类名> 指定，不带该参数时默认为 '投资'。\n")
+    return 0
+
+
 def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    bvid = args.bvid.strip()
-    if not bvid:
-        logger.error("必须提供 BVID")
+    raw_input = args.bvid.strip()
+    if not raw_input:
+        logger.error("必须提供 BVID 或视频链接")
+        return 1
+
+    parsed_bv, _ = parse_video_input(raw_input)
+    bvid = parsed_bv or raw_input
+    if not bvid.startswith("BV"):
+        logger.error("无法从输入中解析出有效的 BVID: %s", raw_input)
+        return 1
+
+    # 校验 category
+    prompts_dir = ctx.config.data_dir / "prompts"
+    available_cats = get_category_names(prompts_dir, logger)
+    category = getattr(args, "category", None) or "投资"
+    category = category.strip()
+    if category not in available_cats:
+        logger.error(
+            "不支持的分类 '%s'。当前可用分类: %s。您可使用 'python b2t.py client categories' 查看所有支持的分类。",
+            category,
+            ", ".join(available_cats),
+        )
         return 1
 
     db = ctx.database()
@@ -169,7 +202,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 1
 
     # --- Phase 1: scan (fetch video detail and create task) ---
-    logger.info("====== add: scan %s ======", bvid)
+    logger.info("====== add: scan %s [分类: %s] ======", bvid, category)
     scrape_duration_max = int(ctx.config.get("bilibili.scrape_duration_max", 7200))
     output_dir = ctx.config.temp_dir / "tasks"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -180,7 +213,13 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
         logger.error("获取视频详情失败 %s: %s", bvid, exc)
         return 1
 
+    info["source_type"] = "manual"
+    info["category"] = category
+    info["source_name"] = category
     task = Task.from_bilibili_info(info)
+    task.source_type = "manual"
+    task.category = category
+    task.source_name = category
     if task.duration > scrape_duration_max:
         task.status = "too_long"
 
@@ -195,7 +234,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     task.write_json(task_path)
     db.upsert_video(task)
     db.upsert_task(task, task_path, "local")
-    logger.info("已创建任务: %s status=%s duration=%s", task.task_id, task.status, task.duration)
+    logger.info("已创建手动任务: %s status=%s duration=%s [分类: %s]", task.task_id, task.status, task.duration, task.category)
 
     if task.status != "normal":
         logger.warning("任务状态为 %s，跳过后续提交和音频准备", task.status)
@@ -580,6 +619,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
             if done_path.exists():
                 shutil.rmtree(done_path)
                 logger.info("已删除 queue/done 中的已收集结果: %s", done_path)
+            db.upsert_video(task)
             db.mark_task_completed(task.task_id)
             _delete_matching_missing(missing_dir, task, logger)
             _delete_matching_submitted(submitted_dir, task, logger)
@@ -652,23 +692,41 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.info("跳过无法识别的文稿文件名: %s", text_file.name)
             skipped += 1
             continue
-        target = md_path_for(meta, markdown_root, text_file)
+        vmeta = db.get_video_meta(meta.bvid) or {}
+        source_type = vmeta.get("source_type") or "group"
+        category = vmeta.get("category") or "投资"
+        target = md_path_for(meta, markdown_root, text_file, source_type=source_type, category=category)
         if target.exists() and not args.force:
             logger.debug("跳过已存在的 Markdown: %s", target)
             skipped += 1
             continue
-        to_render.append((text_file, meta, target))
+        to_render.append((text_file, meta, target, source_type, category))
 
     total = len(to_render)
-    for idx, (text_file, meta, target) in enumerate(to_render, 1):
+    for idx, (text_file, meta, target, source_type, category) in enumerate(to_render, 1):
         transcript = text_file.read_text(encoding="utf-8")
         try:
-            ai_provider, summary = ai.summarize(transcript)
-            content = build_markdown(meta, transcript, summary, ai_provider)
+            ai_provider, summary = ai.summarize(transcript, category=category)
+            content = build_markdown(
+                meta,
+                transcript,
+                summary,
+                ai_provider,
+                source_type=source_type,
+                category=category,
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             db.record_render(meta.bvid, text_file, target, ai_provider, "success")
-            logger.info("已生成 Markdown [%d/%d]: %s (由 %s 生成)", idx, total, target, ai_provider)
+            logger.info(
+                "已生成 Markdown [%d/%d]: %s (分类: %s, 来源: %s, 由 %s 生成)",
+                idx,
+                total,
+                target,
+                category,
+                source_type,
+                ai_provider,
+            )
             succeeded += 1
         except Exception as exc:
             formatted_err = format_api_error(exc)

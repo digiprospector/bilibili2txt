@@ -35,6 +35,7 @@ class Task:
     client_retries: int = 0
     source_type: str = "group"
     source_name: str | None = None
+    category: str = "投资"
     favorite_media_id: int | None = None
 
     @classmethod
@@ -62,6 +63,7 @@ class Task:
             client_retries=int(data.get("client_retries") or 0),
             source_type=str(data.get("source_type") or "group"),
             source_name=data.get("source_name"),
+            category=str(data.get("category") or data.get("source_name") or "投资"),
             favorite_media_id=_optional_int(data.get("favorite_media_id")),
         )
 
@@ -83,6 +85,7 @@ class Task:
             aid=info.get("aid"),
             source_type=str(info.get("source_type") or "group"),
             source_name=info.get("source_name"),
+            category=str(info.get("category") or info.get("source_name") or "投资"),
             favorite_media_id=_optional_int(info.get("favorite_media_id")),
         )
 

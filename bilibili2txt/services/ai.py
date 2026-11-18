@@ -6,6 +6,11 @@ from typing import Any
 from openai import OpenAI, APIError, APITimeoutError, APIConnectionError
 
 from ..config import AppConfig
+from .prompts import (
+    DEFAULT_INVESTMENT_SYSTEM_PROMPT,
+    DEFAULT_INVESTMENT_USER_PROMPT_TEMPLATE,
+    get_prompt_for_category,
+)
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -50,26 +55,8 @@ def format_api_error(exc: Exception) -> str:
 
 
 
-STOCK_ANALYST_SYSTEM_PROMPT = """\
-你是一位有着20年A股实战经验的资深分析师和私募操盘手。
-你的风格：
-1. 语言专业、简练，偶尔带有老股民的干练和对市场的敬畏。
-2. 深度分析：不仅看表面文字，更擅长分析背后的"政策导向"、"筹码分布"、"资金面动向"和"情绪面博弈"。
-3. 逻辑清晰：习惯从'宏观环境、行业赛道、个股逻辑、风险提示'四个维度进行拆解。
-4. 常用词汇：习惯使用如'放量滞涨'、'坑口复苏'、'估值修复'、'主力洗盘'、'北向资金'等内行词汇。
-"""
-
-STOCK_ANALYST_USER_PROMPT_TEMPLATE = """\
-请作为资深分析师，对以下这段关于A股或相关公司的信息进行深度总结和点评。
-你的任务：
-1. 提取核心要点。
-2. 剖析底层逻辑（为什么要关注，利好利空到底在哪里）。
-
-待分析内容如下：
----
-{content}
----
-"""
+STOCK_ANALYST_SYSTEM_PROMPT = DEFAULT_INVESTMENT_SYSTEM_PROMPT
+STOCK_ANALYST_USER_PROMPT_TEMPLATE = DEFAULT_INVESTMENT_USER_PROMPT_TEMPLATE
 
 
 class AIService:
@@ -109,6 +96,7 @@ class AIService:
         content: str,
         provider_name: str | None = None,
         model: str | None = None,
+        category: str | None = None,
     ) -> tuple[str, str]:
         if provider_name:
             provider = None
@@ -134,8 +122,10 @@ class AIService:
             default_headers={"User-Agent": DEFAULT_USER_AGENT},
         )
         model_name = model or provider.get("model", "gpt-4o-mini")
-        system_prompt = provider.get("prompt") or STOCK_ANALYST_SYSTEM_PROMPT
-        user_content = STOCK_ANALYST_USER_PROMPT_TEMPLATE.format(content=content)
+        prompts_dir = self.config.data_dir / "prompts"
+        prompt_cfg = get_prompt_for_category(category or "投资", prompts_dir, self.logger)
+        system_prompt = provider.get("prompt") or prompt_cfg.system_prompt
+        user_content = prompt_cfg.user_prompt_template.format(content=content)
         response = client.chat.completions.create(
             model=model_name,
             messages=[

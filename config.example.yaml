@@ -35,6 +35,7 @@ webdav:
   password_env: B2T_WEBDAV_PASSWORD
   proxy: ""
   upload_split_size_mb: 50  # 文件大于此大小(MB)时自动拆分上传，0表示不拆分
+  max_retries: 5  # 上传失败重试次数，默认5次
 
 client:
   local_download_audio_seconds: 1800
