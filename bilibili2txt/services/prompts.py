@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from ..paths import ROOT_DIR
+
 
 @dataclass
 class PromptConfig:
@@ -84,8 +86,15 @@ BUILTIN_PROMPTS: dict[str, PromptConfig] = {
 
 def load_prompts_from_dir(prompts_dir: Path | None, logger: logging.Logger | None = None) -> dict[str, PromptConfig]:
     """从指定目录动态加载自定义 YAML 提示词配置"""
+DEFAULT_PROMPTS_DIR = ROOT_DIR / "prompts"
+
+
+def load_prompts_from_dir(prompts_dir: Path | None = None, logger: logging.Logger | None = None) -> dict[str, PromptConfig]:
+    """从指定目录动态加载 YAML 提示词配置（默认为仓库根目录 prompts）"""
     configs = dict(BUILTIN_PROMPTS)
     if not prompts_dir or not prompts_dir.exists():
+        prompts_dir = prompts_dir or DEFAULT_PROMPTS_DIR
+    if not prompts_dir.exists():
         return configs
 
     for file_path in prompts_dir.glob("*.yaml"):

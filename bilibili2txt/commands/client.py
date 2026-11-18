@@ -158,7 +158,7 @@ def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def categories(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    prompts_dir = ctx.config.data_dir / "prompts"
+    prompts_dir = ctx.config.prompts_dir
     cats = get_available_categories(prompts_dir, logger)
     print("\n当前系统支持的内容分类（Category）：")
     print("-" * 60)
@@ -182,7 +182,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 1
 
     # 校验 category
-    prompts_dir = ctx.config.data_dir / "prompts"
+    prompts_dir = ctx.config.prompts_dir
     available_cats = get_category_names(prompts_dir, logger)
     category = getattr(args, "category", None) or "投资"
     category = category.strip()

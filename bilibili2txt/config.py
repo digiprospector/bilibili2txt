@@ -29,6 +29,10 @@ class AppConfig:
         return self.path("data.repo_dir", "data")
 
     @property
+    def prompts_dir(self) -> Path:
+        return self.path("app.prompts_dir", "prompts")
+
+    @property
     def queue_dir(self) -> Path:
         return self.path("queue.repo_dir", "queue")
 

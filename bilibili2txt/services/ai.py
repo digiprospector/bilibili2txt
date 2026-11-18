@@ -122,7 +122,7 @@ class AIService:
             default_headers={"User-Agent": DEFAULT_USER_AGENT},
         )
         model_name = model or provider.get("model", "gpt-4o-mini")
-        prompts_dir = self.config.data_dir / "prompts"
+        prompts_dir = self.config.prompts_dir
         prompt_cfg = get_prompt_for_category(category or "投资", prompts_dir, self.logger)
         system_prompt = provider.get("prompt") or prompt_cfg.system_prompt
         user_content = prompt_cfg.user_prompt_template.format(content=content)
