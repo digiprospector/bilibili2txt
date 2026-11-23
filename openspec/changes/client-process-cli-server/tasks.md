@@ -40,7 +40,7 @@ Interfaces:
 
 ## 2. Server dispatch in the pipeline
 
-- [ ] 2.1 Route the wait phase to browser or the selected Colab CLI handler — verify: focused server-mode tests pass
+- [x] 2.1 Route the wait phase to browser or the selected Colab CLI handler — verify: focused server-mode tests pass
 
 Covers: CP-1, CP-2, CP-5, CP-7 · Test: scenario-first
 
