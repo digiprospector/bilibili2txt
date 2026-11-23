@@ -55,7 +55,7 @@ Interfaces:
 
 ## 3. Single-video process workflow and docs
 
-- [ ] 3.1 Implement process orchestration and document usage — verify: focused process and full test suites pass
+- [x] 3.1 Implement process orchestration and document usage — verify: focused process and full test suites pass
 
 Covers: CP-3, CP-4, CP-6, CP-8 · Test: scenario-first
 
