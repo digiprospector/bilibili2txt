@@ -98,4 +98,3 @@ def test_client_process_accepts_server_account_and_category():
     assert args.server == "cli"
     assert args.account == "account-a"
     assert args.category == "历史"
-
