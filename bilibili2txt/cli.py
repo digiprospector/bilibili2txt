@@ -14,6 +14,7 @@ from .commands.client import (
     collect as client_collect,
     finish as client_finish,
     prepare_audio as client_prepare_audio,
+    process as client_process,
     render as client_render,
     resubmit_missing as client_resubmit_missing,
     resume as client_resume,
@@ -92,6 +93,7 @@ ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV �
 ARG_REASON = (("-r", "--reason"), {"default": "undownloadable", "help": "忽略原因（如 undownloadable, deleted, upower）"})
 ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
+ARG_SERVER = (("--server",), {"choices": ("browser", "cli"), "default": "browser", "help": "转写服务端方式：browser 或 cli（默认 browser）"})
 ARG_ACCOUNT = (("-a", "--account"), {"help": "colab 账号名（对应 colab.accounts 配置）"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
@@ -132,11 +134,12 @@ COMMANDS = {
         ("submit", client_submit, [ARG_INPUT]),
         ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION, ARG_FORCE]),
         ("add", client_add, [ARG_BVID_POS, ARG_CATEGORY]),
+        ("process", client_process, [ARG_BVID_POS, ARG_CATEGORY, ARG_SERVER, ARG_ACCOUNT]),
         ("categories", client_categories, []),
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
-        ("run", client_run, _CLIENT_PIPELINE_ARGS),
+        ("run", client_run, _CLIENT_PIPELINE_ARGS + [ARG_SERVER]),
         ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
         ("clean-favorites", client_clean_finished_favorites, []),
@@ -267,6 +270,7 @@ COMMAND_HELPS = {
         "submit": "将新视频打包成转写任务提交到 Git 任务队列中",
         "prepare-audio": "提取视频音频并上传至共享 WebDAV 网盘",
         "add": "通过 BV 号直接添加单个视频（扫描+提交+准备音频一步完成）",
+        "process": "处理指定 BV 视频完整流程（准备、提交、等待转写、收集和归档）",
         "collect": "从任务队列拉取已转写完成的 JSON 结果",
         "render": "将收集到的转写结果渲染并调用 AI 生成 Markdown 总结",
         "sync": "将生成的 Markdown 总结同步至网盘或指定归档目录",

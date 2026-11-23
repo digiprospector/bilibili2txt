@@ -234,3 +234,4 @@ site/
 
 # Reference projects
 kr-sc-srt/
+.grillspec/state.json
