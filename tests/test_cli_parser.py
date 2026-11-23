@@ -39,6 +39,7 @@ def test_client_commands_match_public_contract():
         "sync",
         "run",
         "resume",
+        "process",
         "resubmit-missing",
         "clean-favorites",
         "finish",
@@ -78,3 +79,23 @@ def test_client_run_accepts_cli_server():
 def test_client_run_rejects_unknown_server():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["client", "run", "--server", "unknown"])
+
+
+def test_client_process_accepts_bvid_and_defaults():
+    args = build_parser().parse_args(["client", "process", "BVxxxx"])
+
+    assert args.bvid == "BVxxxx"
+    assert args.category == "投资"
+    assert args.server == "browser"
+    assert args.account is None
+
+
+def test_client_process_accepts_server_account_and_category():
+    args = build_parser().parse_args(
+        ["client", "process", "BVxxxx", "--server", "cli", "--account", "account-a", "--category", "历史"]
+    )
+
+    assert args.server == "cli"
+    assert args.account == "account-a"
+    assert args.category == "历史"
+

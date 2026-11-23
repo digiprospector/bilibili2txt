@@ -6,6 +6,7 @@ from argparse import Namespace
 from types import ModuleType
 
 from bilibili2txt.commands import client as client_commands
+from bilibili2txt.commands import colab as colab_commands
 from bilibili2txt.config import CommandContext, load_config
 
 
@@ -136,3 +137,36 @@ def test_cli_failure_stops_before_collect(tmp_path, monkeypatch):
 
     assert code == 7
     assert events == ["run-all"]
+
+
+def test_colab_status_lists_configured_account_names(tmp_path, monkeypatch, caplog):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "app:",
+                f"  temp_dir: {(tmp_path / 'temp').as_posix()}",
+                "  logs_dir: logs",
+                "data:",
+                f"  repo_dir: {(tmp_path / 'data').as_posix()}",
+                "queue:",
+                f"  repo_dir: {(tmp_path / 'queue').as_posix()}",
+                "colab:",
+                "  accounts:",
+                "    - name: account-a",
+                "    - name: account-b",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ctx = CommandContext(load_config(config_path), "colab status")
+    monkeypatch.setattr(colab_commands, "_run_wsl", lambda *_args, **_kwargs: 0)
+    logger = logging.getLogger("test-colab-status")
+
+    with caplog.at_level(logging.INFO):
+        code = colab_commands.status(ctx, Namespace(account=None), logger)
+
+    assert code == 0
+    assert "=== account-a ===" in caplog.text
+    assert "=== account-b ===" in caplog.text

@@ -282,6 +282,19 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0
 
 
+def process(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    if getattr(args, "server", "browser") == "cli" and not getattr(args, "account", None):
+        logger.error("client process 使用 CLI server 时必须指定 --account")
+        return 2
+
+    add_code = add(ctx, args, logger)
+    if add_code != 0:
+        logger.error("单视频准备失败，停止 process 流程")
+        return add_code
+
+    return run_pipeline(ctx, args, logger, from_step="wait")
+
+
 def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
     queue = ctx.queue(logger)
     db = ctx.database()

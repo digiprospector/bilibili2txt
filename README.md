@@ -114,6 +114,12 @@ python b2t.py client scan
 # 手动直接添加单个视频（扫描、提交、准备音频一步完成）
 python b2t.py client add BVxxxx
 
+# 处理单个视频的完整流程（不扫描其他视频）
+python b2t.py client process BVxxxx
+
+# process 使用指定的单个 CLI Colab 账号
+python b2t.py client process BVxxxx --server cli --account account-a
+
 # 提取视频音频并上传至共享 WebDAV 网盘
 python b2t.py client prepare-audio
 
@@ -138,6 +144,9 @@ python b2t.py client finish
 ```bash
 # 一键自动运行完整流程（默认等待转写完成并渲染归档）
 python b2t.py client run
+
+# 使用 Colab CLI 并发启动所有配置账号处理队列
+python b2t.py client run --server cli
 
 # 仅提交任务并立即退出（不等待）
 python b2t.py client run --no-wait
@@ -167,7 +176,7 @@ python b2t.py colab run --account account-a
 # 并发启动配置中的所有账号
 python b2t.py colab run-all
 
-# 查看 session 状态
+# 查看 session 状态及可用账号名称（配置/书签账号列表）
 python b2t.py colab status
 
 # 停止指定账号的 session
