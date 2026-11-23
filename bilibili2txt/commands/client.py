@@ -16,6 +16,7 @@ from ..services.markdown import build_markdown, md_path_for, parse_transcript_fi
 from ..services.prompts import get_available_categories, get_category_names
 from ..services.video_id import parse_video_input
 from ..services.webdav import WebDavClient
+from .colab import run as colab_run, run_all as colab_run_all
 
 
 def scan(ctx: CommandContext, args, logger: logging.Logger) -> int:
@@ -973,31 +974,47 @@ def run_pipeline(ctx: CommandContext, args, logger: logging.Logger, from_step: s
 
         # 4. wait
         if "wait" in steps_to_run:
-            logger.info("=== 开始执行 chrome_bookmark_manager ===")
-            try:
-                import sys
-                _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-                if str(_bookmark_dir) not in sys.path:
-                    sys.path.insert(0, str(_bookmark_dir))
-                from chrome_bookmark_manager import manage_chrome
-                manage_chrome('open', logger)
-            except Exception as e:
-                logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
-            logger.info("=== chrome_bookmark_manager 执行完成 ===")
+            server_mode = getattr(args, "server", "browser")
+            if server_mode == "cli":
+                if getattr(args, "command", None) == "process":
+                    if not getattr(args, "account", None):
+                        logger.error("client process 使用 CLI server 时必须指定 --account")
+                        return _finish_run(2, "缺少 Colab 账号")
+                    logger.info("====== wait-for-cli-server account=%s ======", args.account)
+                    server_code = colab_run(ctx, args, logger)
+                else:
+                    logger.info("====== wait-for-cli-server run-all ======")
+                    server_code = colab_run_all(ctx, args, logger)
 
-            logger.info("====== wait-for-queue-completion ======")
-            _wait_for_queue_completion(ctx, args, logger)
+                if server_code != 0:
+                    logger.error("CLI server 执行失败，代码=%s", server_code)
+                    return _finish_run(server_code, "CLI server 执行失败")
+            else:
+                logger.info("=== 开始执行 chrome_bookmark_manager ===")
+                try:
+                    import sys
+                    _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+                    if str(_bookmark_dir) not in sys.path:
+                        sys.path.insert(0, str(_bookmark_dir))
+                    from chrome_bookmark_manager import manage_chrome
+                    manage_chrome('open', logger)
+                except Exception as e:
+                    logger.warning("启动 chrome_bookmark_manager 失败: %s", e)
+                logger.info("=== chrome_bookmark_manager 执行完成 ===")
 
-            logger.info("=== 关闭已打开的 Chrome 窗口 ===")
-            try:
-                import sys
-                _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
-                if str(_bookmark_dir) not in sys.path:
-                    sys.path.insert(0, str(_bookmark_dir))
-                from chrome_bookmark_manager import manage_chrome
-                manage_chrome('close', logger)
-            except Exception as e:
-                logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
+                logger.info("====== wait-for-queue-completion ======")
+                _wait_for_queue_completion(ctx, args, logger)
+
+                logger.info("=== 关闭已打开的 Chrome 窗口 ===")
+                try:
+                    import sys
+                    _bookmark_dir = Path(__file__).resolve().parent.parent.parent.parent / "python_utils_private"
+                    if str(_bookmark_dir) not in sys.path:
+                        sys.path.insert(0, str(_bookmark_dir))
+                    from chrome_bookmark_manager import manage_chrome
+                    manage_chrome('close', logger)
+                except Exception as e:
+                    logger.warning("关闭 chrome_bookmark_manager 失败: %s", e)
 
         # 5. collect
         if "collect" in steps_to_run:
