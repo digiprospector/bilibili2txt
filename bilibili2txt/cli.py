@@ -92,6 +92,7 @@ ARG_EXCLUDE = (("-e", "--exclude"), {"action": "append", "help": "排除的 BV �
 ARG_REASON = (("-r", "--reason"), {"default": "undownloadable", "help": "忽略原因（如 undownloadable, deleted, upower）"})
 ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
+ARG_SERVER = (("--server",), {"choices": ("browser", "cli"), "default": "browser", "help": "转写服务端方式：browser 或 cli（默认 browser）"})
 ARG_ACCOUNT = (("-a", "--account"), {"help": "colab 账号名（对应 colab.accounts 配置）"})
 
 _SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
@@ -136,7 +137,7 @@ COMMANDS = {
         ("collect", client_collect, [ARG_FORCE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
-        ("run", client_run, _CLIENT_PIPELINE_ARGS),
+        ("run", client_run, _CLIENT_PIPELINE_ARGS + [ARG_SERVER]),
         ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS),
         ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
         ("clean-favorites", client_clean_finished_favorites, []),
