@@ -144,7 +144,12 @@ def publish(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = T
             # 清理 temp/audio/ 中该任务的音频文件
             audio_dir = ctx.config.temp_dir / "audio"
             if audio_dir.exists():
-                audio_files = list(audio_dir.glob(f"{task.bvid}*.mp3*"))
+                from ..services.audio import _is_task_audio_filename
+
+                audio_files = [
+                    f for f in audio_dir.glob(f"{task.bvid}*.mp3*")
+                    if _is_task_audio_filename(task.bvid, f.name)
+                ]
                 for f in audio_files:
                     f.unlink(missing_ok=True)
                 if audio_files:
@@ -154,7 +159,11 @@ def publish(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = T
             chunks_dir = ctx.config.temp_dir / "chunks"
             if chunks_dir.exists():
                 for chunk_subdir in chunks_dir.iterdir():
-                    if chunk_subdir.is_dir() and chunk_subdir.name.startswith(task.bvid):
+                    if chunk_subdir.is_dir() and (
+                        chunk_subdir.name == task.bvid
+                        or chunk_subdir.name.startswith(f"{task.bvid}_")
+                        and not chunk_subdir.name.startswith(f"{task.bvid}_p")
+                    ):
                         shutil.rmtree(chunk_subdir)
                         logger.info("已删除任务 %s 的分片目录：%s", task.bvid, chunk_subdir)
 

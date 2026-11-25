@@ -47,21 +47,17 @@ class NetdiskSync:
                 dest = self.destination_for(file_date, md_file.name, today)
                 self._copy(md_file, dest, force, stats)
 
-        # 2. 同步 manual/{category}/{date} 手动分类目录
+        # 2. 同步 manual/{category}/{title} 手动分类目录
         manual_root = self.markdown_root / "manual"
         if manual_root.exists() and manual_root.is_dir():
             for cat_dir in sorted(path for path in manual_root.iterdir() if path.is_dir()):
                 cat_dest_root = self.dest_root / "manual" / cat_dir.name
-                for day_dir in sorted(path for path in cat_dir.iterdir() if path.is_dir()):
-                    try:
-                        file_date = date.fromisoformat(day_dir.name)
-                    except ValueError:
-                        self.logger.info("跳过非日期格式的手动 markdown 目录：%s", day_dir)
-                        continue
-                    for md_file in day_dir.glob("*.md"):
+                for title_dir in sorted(path for path in cat_dir.iterdir() if path.is_dir()):
+                    for md_file in sorted(title_dir.glob("*.md")):
                         if bvid and bvid not in md_file.name:
                             continue
-                        dest = self.destination_for(file_date, md_file.name, today, base_dest=cat_dest_root)
+                        clean_name = _strip_timestamp(md_file.name)
+                        dest = cat_dest_root / title_dir.name / clean_name
                         self._copy(md_file, dest, force, stats)
 
         return stats
@@ -69,14 +65,7 @@ class NetdiskSync:
     def archive_previous_month(self, today: date, force: bool) -> int:
         first_this_month = today.replace(day=1)
         last_month_day = first_this_month - timedelta(days=1)
-        archived = self._archive_root_month(self.dest_root, last_month_day, force)
-
-        manual_dest = self.dest_root / "manual"
-        if manual_dest.exists() and manual_dest.is_dir():
-            for cat_dir in sorted(path for path in manual_dest.iterdir() if path.is_dir()):
-                archived += self._archive_root_month(cat_dir, last_month_day, force)
-
-        return archived
+        return self._archive_root_month(self.dest_root, last_month_day, force)
 
     def _archive_root_month(self, base_root: Path, last_month_day: date, force: bool) -> int:
         compact = base_root / f"{last_month_day.year}-{last_month_day.month:02d}"

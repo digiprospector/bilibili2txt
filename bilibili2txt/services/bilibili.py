@@ -66,7 +66,12 @@ class BilibiliService:
             self.logger.warning("Bilibili 登录测试失败: %s", exc)
         return False
 
-    def get_video_detail(self, bvid: str | None = None, aid: int | None = None) -> dict[str, Any]:
+    def get_video_detail(
+        self,
+        bvid: str | None = None,
+        aid: int | None = None,
+        page: int | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any]
         if bvid:
             params = {"bvid": bvid}
@@ -82,17 +87,38 @@ class BilibiliService:
             timeout=10,
         )
         resolved_bvid = video["bvid"]
+        pages = video.get("pages") or []
+        selected_page = None
+        if page is not None and pages:
+            for item in pages:
+                if item.get("page") == page:
+                    selected_page = item
+                    break
+            if selected_page is None:
+                raise ValueError(f"视频 {resolved_bvid} 不存在分P p={page}（共 {len(pages)} P）")
+
+        task_bvid = f"{resolved_bvid}_p{page}" if page and page > 1 else resolved_bvid
+        duration = selected_page.get("duration", video["duration"]) if selected_page else video["duration"]
+        cid = selected_page.get("cid", video["cid"]) if selected_page else video["cid"]
+        part_title = str(selected_page.get("part") or "").strip() if selected_page else None
+        source_url = (
+            f"https://www.bilibili.com/video/{resolved_bvid}?p={page}"
+            if page and page > 1
+            else f"https://www.bilibili.com/video/{resolved_bvid}"
+        )
+
         return {
-            "bvid": resolved_bvid,
+            "bvid": task_bvid,
             "aid": video.get("aid", aid),
             "title": video["title"],
+            "part_title": part_title or None,
             "up_name": video["owner"]["name"],
             "up_mid": video["owner"].get("mid"),
             "pubdate": video["pubdate"],
-            "duration": video["duration"],
-            "cid": video["cid"],
+            "duration": duration,
+            "cid": cid,
             "status": "upower" if video.get("is_upower_exclusive") else "normal",
-            "source_url": f"https://www.bilibili.com/video/{resolved_bvid}",
+            "source_url": source_url,
         }
 
     def iter_target_videos(

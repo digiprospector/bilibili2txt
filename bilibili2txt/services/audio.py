@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yt_dlp
@@ -31,7 +32,10 @@ class AudioService:
 
     def download_task_audio(self, task: Task, force_redownload: bool = False) -> list[Path]:
         if not force_redownload:
-            existing = sorted(self.audio_dir.glob(f"{task.bvid}*.mp3"))
+            existing = sorted(
+                f for f in self.audio_dir.glob(f"{task.bvid}*.mp3")
+                if _is_task_audio_filename(task.bvid, f.name)
+            )
             valid = [f for f in existing if f.is_file() and f.stat().st_size > 0]
             if valid:
                 self.logger.info("检测到本地已存在音频文件 (%d 个)，直接使用本地文件：%s", len(valid), [f.name for f in valid])
@@ -125,7 +129,10 @@ class AudioService:
             na_file.rename(single)
             return [single]
 
-        files = sorted(self.audio_dir.glob(f"{task.bvid}_*.mp3"))
+        files = sorted(
+            f for f in self.audio_dir.glob(f"{task.bvid}_*.mp3")
+            if _is_task_audio_filename(task.bvid, f.name)
+        )
         if files:
             return files
         if single.exists():
@@ -134,7 +141,8 @@ class AudioService:
 
     def _clean_task_audio(self, task: Task) -> None:
         for path in self.audio_dir.glob(f"{task.bvid}*.mp3*"):
-            path.unlink(missing_ok=True)
+            if _is_task_audio_filename(task.bvid, path.name):
+                path.unlink(missing_ok=True)
 
     def _export_json_to_netscape_cookies(self, json_path: Path, txt_path: Path) -> None:
         import json
@@ -166,3 +174,8 @@ class AudioService:
         txt_path.parent.mkdir(parents=True, exist_ok=True)
         jar.save(ignore_discard=True, ignore_expires=True)
         self.logger.info("已将 JSON 格式 Cookie 导出为 Netscape 格式：%s", txt_path)
+
+
+def _is_task_audio_filename(bvid: str, filename: str) -> bool:
+    """精确匹配当前任务音频文件，避免 BVxxx 误匹配 BVxxx_p2。"""
+    return bool(re.fullmatch(rf"{re.escape(bvid)}(?:_\d+|_NA)?\.mp3(?:\..*)?", filename))

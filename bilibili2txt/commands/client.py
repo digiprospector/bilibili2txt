@@ -19,7 +19,7 @@ from ..services.bilibili import BilibiliService
 from ..services.gitqueue import GitQueue
 from ..services.markdown import build_markdown, md_path_for, parse_transcript_filename
 from ..services.prompts import get_available_categories, get_category_names, resolve_prompt
-from ..services.video_id import parse_video_input
+from ..services.video_id import parse_video_input, parse_video_page
 from ..services.webdav import WebDavClient
 from .colab import run as colab_run, run_all as colab_run_all
 
@@ -182,6 +182,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 1
 
     parsed_bv, _ = parse_video_input(raw_input)
+    page = parse_video_page(raw_input)
     bvid = parsed_bv or raw_input
     if not bvid.startswith("BV"):
         logger.error("无法从输入中解析出有效的 BVID: %s", raw_input)
@@ -208,15 +209,16 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 1
 
     # --- Phase 1: scan (fetch video detail and create task) ---
-    logger.info("====== add: scan %s [分类: %s] ======", bvid, category)
+    task_label = f"{bvid}_p{page}" if page and page > 1 else bvid
+    logger.info("====== add: scan %s [分类: %s] ======", task_label, category)
     scrape_duration_max = int(ctx.config.get("bilibili.scrape_duration_max", 7200))
     output_dir = ctx.config.temp_dir / "tasks"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        info = service.get_video_detail(bvid=bvid)
+        info = service.get_video_detail(bvid=bvid, page=page) if page else service.get_video_detail(bvid=bvid)
     except Exception as exc:
-        logger.error("获取视频详情失败 %s: %s", bvid, exc)
+        logger.error("获取视频详情失败 %s: %s", task_label, exc)
         return 1
 
     info["source_type"] = "manual"
@@ -230,10 +232,10 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     if not is_manual_mode(ctx, args) and task.duration > scrape_duration_max:
         task.status = "too_long"
 
-    for old_file in output_dir.glob(f"*_{bvid}.json"):
+    for old_file in output_dir.glob(f"*_{task.bvid}.json"):
         try:
             old_file.unlink()
-            logger.info("已删除 %s 的旧任务文件: %s", bvid, old_file)
+            logger.info("已删除 %s 的旧任务文件: %s", task.bvid, old_file)
         except Exception as e:
             logger.warning("删除旧任务文件 %s 失败: %s", old_file, e)
 
@@ -755,7 +757,10 @@ def _extract_bvid(args) -> str | None:
     if not raw_str:
         return None
     parsed_bv, _ = parse_video_input(raw_str)
-    return parsed_bv or raw_str
+    if not parsed_bv:
+        return raw_str
+    page = parse_video_page(raw_str)
+    return f"{parsed_bv}_p{page}" if page and page > 1 else parsed_bv
 
 
 def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
@@ -799,15 +804,23 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
         vmeta = db.get_video_meta(meta.bvid) or {}
         source_type = vmeta.get("source_type") or "group"
         category = vmeta.get("category") or "投资"
-        target = md_path_for(meta, markdown_root, text_file, source_type=source_type, category=category)
+        dir_title = vmeta.get("title") or meta.title
+        target = md_path_for(
+            meta,
+            markdown_root,
+            text_file,
+            source_type=source_type,
+            category=category,
+            dir_title=dir_title,
+        )
         if target.exists() and not force:
             logger.debug("跳过已存在的 Markdown: %s", target)
             skipped += 1
             continue
-        to_render.append((text_file, meta, target, source_type, category))
+        to_render.append((text_file, meta, target, source_type, category, vmeta.get("source_url")))
 
     total = len(to_render)
-    for idx, (text_file, meta, target, source_type, category) in enumerate(to_render, 1):
+    for idx, (text_file, meta, target, source_type, category, video_url) in enumerate(to_render, 1):
         transcript = text_file.read_text(encoding="utf-8")
         try:
             if override_prompt is not None:
@@ -821,6 +834,7 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
                 ai_provider,
                 source_type=source_type,
                 category=category,
+                video_url=video_url,
             )
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
@@ -1343,7 +1357,8 @@ def _wait_for_queue_completion(ctx: CommandContext, args, logger: logging.Logger
 def _final_transcript_name(task: Task, transcript: Path) -> str:
     dt = datetime.fromtimestamp(task.pubdate or 0, tz=timezone(timedelta(hours=8)))
     timestamp = dt.strftime("%Y-%m-%d_%H-%M-%S")
-    title = _sanitize_filename(task.title)[:50]
+    display_title = getattr(task, "part_title", None) or task.title
+    title = _sanitize_filename(display_title)[:50]
     part = ""
     stem = transcript.stem
     if stem.startswith("transcript_"):

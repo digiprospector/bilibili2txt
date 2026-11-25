@@ -37,6 +37,7 @@ class Task:
     source_name: str | None = None
     category: str = "投资"
     favorite_media_id: int | None = None
+    part_title: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
@@ -65,6 +66,7 @@ class Task:
             source_name=data.get("source_name"),
             category=str(data.get("category") or data.get("source_name") or "投资"),
             favorite_media_id=_optional_int(data.get("favorite_media_id")),
+            part_title=data.get("part_title"),
         )
 
     @classmethod
@@ -87,6 +89,7 @@ class Task:
             source_name=info.get("source_name"),
             category=str(info.get("category") or info.get("source_name") or "投资"),
             favorite_media_id=_optional_int(info.get("favorite_media_id")),
+            part_title=info.get("part_title"),
         )
 
     @classmethod

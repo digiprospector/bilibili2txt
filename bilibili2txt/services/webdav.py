@@ -107,14 +107,12 @@ class WebDavClient:
             return set()
 
     def has_audio_files(self, bvid: str, remote_files: set[str] | None = None) -> bool:
+        import re
+
         if remote_files is None:
             remote_files = self.list_files()
-        for rf in remote_files:
-            if rf == f"{bvid}.mp3" or rf.startswith(f"{bvid}.mp3.part"):
-                return True
-            if rf.startswith(f"{bvid}_") and ".mp3" in rf:
-                return True
-        return False
+        pattern = re.compile(rf"^{re.escape(bvid)}(?:_\d+)?\.mp3(?:\.part\d+)?$")
+        return any(pattern.match(rf) for rf in remote_files)
 
     def download(self, remote_name: str, local_path: Path) -> bool:
         url = self.url_for(remote_name)

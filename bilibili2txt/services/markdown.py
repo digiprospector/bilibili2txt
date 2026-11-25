@@ -42,16 +42,31 @@ def parse_transcript_filename(path: Path) -> TranscriptMetadata | None:
     )
 
 
+def _sanitize_dirname(value: str) -> str:
+    invalid = '<>:"/\\|?*'
+    cleaned = value.translate(str.maketrans(invalid, "_" * len(invalid))).strip().rstrip(". ")
+    return cleaned or "untitled"
+
+
 def md_path_for(
     meta: TranscriptMetadata,
     markdown_root: Path,
     text_file: Path,
     source_type: str = "group",
     category: str = "投资",
+    dir_title: str | None = None,
 ) -> Path:
     if source_type == "manual":
-        return markdown_root / "manual" / category / meta.date_folder / text_file.with_suffix(".md").name
+        title_dir = _sanitize_dirname(dir_title or meta.title)
+        return markdown_root / "manual" / category / title_dir / text_file.with_suffix(".md").name
     return markdown_root / meta.date_folder / text_file.with_suffix(".md").name
+
+
+def video_url_for(bvid: str) -> str:
+    match = re.fullmatch(r"(?i)(BV[a-zA-Z0-9]{10})_p([0-9]+)", bvid.strip())
+    if match:
+        return f"https://www.bilibili.com/video/{match.group(1)}?p={match.group(2)}"
+    return f"https://www.bilibili.com/video/{bvid}"
 
 def adjust_heading_levels(summary: str) -> str:
     headings = re.findall(r"(?m)^(#+)[ \t]+", summary)
@@ -80,17 +95,19 @@ def build_markdown(
     ai_provider: str,
     source_type: str = "group",
     category: str = "投资",
+    video_url: str | None = None,
 ) -> str:
     summary = adjust_heading_levels(summary)
     source_label = "手动添加 (Manual)" if source_type == "manual" else "自动同步 (Auto)"
     tag_source = "手动添加" if source_type == "manual" else "自动同步"
+    resolved_url = video_url or video_url_for(meta.bvid)
     return f"""# {meta.title}
 
 - **分类**: {category}
 - **来源**: {source_label}
 - **UP主**: {meta.up_name}
 - **BVID**: {meta.bvid}
-- **视频链接**: <https://www.bilibili.com/video/{meta.bvid}>
+- **视频链接**: <{resolved_url}>
 - **文件时间**: {meta.formatted_time}
 
 ---
