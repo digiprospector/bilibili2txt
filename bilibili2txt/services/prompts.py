@@ -89,6 +89,25 @@ def load_prompts_from_dir(prompts_dir: Path | None, logger: logging.Logger | Non
 DEFAULT_PROMPTS_DIR = ROOT_DIR / "prompts"
 
 
+def _parse_prompt_yaml(file_path: Path) -> PromptConfig | None:
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        return None
+    name = str(data.get("name") or file_path.stem).strip()
+    desc = str(data.get("description") or "").strip()
+    sys_prompt = str(data.get("system_prompt") or "").strip()
+    user_prompt = str(data.get("user_prompt_template") or "").strip()
+    if name and sys_prompt and user_prompt:
+        return PromptConfig(
+            name=name,
+            description=desc,
+            system_prompt=sys_prompt,
+            user_prompt_template=user_prompt,
+        )
+    return None
+
+
 def load_prompts_from_dir(prompts_dir: Path | None = None, logger: logging.Logger | None = None) -> dict[str, PromptConfig]:
     """从指定目录动态加载 YAML 提示词配置（默认为仓库根目录 prompts）"""
     configs = dict(BUILTIN_PROMPTS)
@@ -99,22 +118,9 @@ def load_prompts_from_dir(prompts_dir: Path | None = None, logger: logging.Logge
 
     for file_path in prompts_dir.glob("*.yaml"):
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            if not isinstance(data, dict):
-                continue
-            name = str(data.get("name") or file_path.stem).strip()
-            desc = str(data.get("description") or "").strip()
-            sys_prompt = str(data.get("system_prompt") or "").strip()
-            user_prompt = str(data.get("user_prompt_template") or "").strip()
-
-            if name and sys_prompt and user_prompt:
-                configs[name] = PromptConfig(
-                    name=name,
-                    description=desc,
-                    system_prompt=sys_prompt,
-                    user_prompt_template=user_prompt,
-                )
+            cfg = _parse_prompt_yaml(file_path)
+            if cfg:
+                configs[cfg.name] = cfg
         except Exception as exc:
             if logger:
                 logger.warning("加载提示词配置文件失败 %s: %s", file_path, exc)
@@ -145,3 +151,34 @@ def get_prompt_for_category(
     if "投资" in prompts:
         return prompts["投资"]
     return next(iter(prompts.values()))
+
+
+def resolve_prompt(
+    prompt_spec: str,
+    prompts_dir: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> PromptConfig:
+    """按 Prompt 名称或 YAML 文件路径解析 Prompt 配置，找不到时抛出 ValueError。"""
+    spec = prompt_spec.strip()
+    if not spec:
+        raise ValueError("Prompt 名称或路径不能为空")
+
+    base_dir = prompts_dir or DEFAULT_PROMPTS_DIR
+    candidates = [Path(spec).expanduser()]
+    if not candidates[0].is_absolute() and base_dir.exists():
+        candidates.append(base_dir / spec)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            cfg = _parse_prompt_yaml(candidate)
+            if not cfg:
+                raise ValueError(f"Prompt 文件格式无效（缺少 system_prompt 或 user_prompt_template）: {candidate}")
+            return cfg
+
+    if spec.endswith((".yaml", ".yml")) or "/" in spec or "\\" in spec:
+        raise ValueError(f"找不到指定的 Prompt 文件: {spec}")
+
+    prompts = load_prompts_from_dir(prompts_dir, logger)
+    if spec in prompts:
+        return prompts[spec]
+    raise ValueError(f"未找到名为 '{spec}' 的 Prompt。可用 Prompt: {', '.join(prompts.keys())}")

@@ -39,7 +39,7 @@ def test_client_commands_match_public_contract():
         "sync",
         "run",
         "resume",
-        "process",
+        "manual",
         "resubmit-missing",
         "clean-favorites",
         "finish",
@@ -81,8 +81,8 @@ def test_client_run_rejects_unknown_server():
         build_parser().parse_args(["client", "run", "--server", "unknown"])
 
 
-def test_client_process_accepts_bvid_and_defaults():
-    args = build_parser().parse_args(["client", "process", "BVxxxx"])
+def test_client_manual_accepts_bvid_and_defaults():
+    args = build_parser().parse_args(["client", "manual", "BVxxxx"])
 
     assert args.bvid == "BVxxxx"
     assert args.category == "投资"
@@ -90,9 +90,9 @@ def test_client_process_accepts_bvid_and_defaults():
     assert args.account is None
 
 
-def test_client_process_accepts_server_account_and_category():
+def test_client_manual_accepts_server_account_and_category():
     args = build_parser().parse_args(
-        ["client", "process", "BVxxxx", "--server", "cli", "--account", "account-a", "--category", "历史"]
+        ["client", "manual", "BVxxxx", "--server", "cli", "--account", "account-a", "--category", "历史"]
     )
 
     assert args.server == "cli"

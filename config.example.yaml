@@ -8,7 +8,7 @@ data:
 queue:
   repo_dir: queue
   repo_url: "git@github.com:your-username/your-queue-repo.git"  # Colab 自动克隆队列仓库的地址
-  process_dir: process  # client process 使用的独立队列子目录
+  manual_dir: manual  # client manual 使用的独立队列子目录
   pending_dir: pending
   claimed_dir: claimed
   results_dir: results
@@ -70,7 +70,7 @@ server:
 colab:
   gpu: T4
   notebook: notebooks/bilibili2txt_server_colab.ipynb
-  process_notebook: notebooks/bilibili2txt_server_colab_process.ipynb
+  manual_notebook: notebooks/bilibili2txt_server_colab_manual.ipynb
   bookmark_config: ../python_utils_private/open_chrome_bookmark_config.yaml
   command_timeout_seconds: 30  # new/status/stop/whoami 的超时；notebook 执行不限制
   # 每个账号是 WSL 里的一个用户名，通过 wsl.exe -u <name> 切换用户执行

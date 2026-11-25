@@ -30,7 +30,7 @@ class GitQueue:
         self.git_timeout = git_timeout
         subdir = str(queue_subdir).strip().strip("/\\") if queue_subdir else ""
         self.queue_subdir = subdir
-        # work_dir 指向实际队列根目录：默认 queue/，process 模式为 queue/<queue_subdir>/
+        # work_dir 指向实际队列根目录：默认 queue/，manual 模式为 queue/<queue_subdir>/
         self.work_dir = self.repo_dir / subdir if subdir else self.repo_dir
 
     @property

@@ -27,16 +27,16 @@ def _context(tmp_path: Path) -> CommandContext:
         + "\n",
         encoding="utf-8",
     )
-    return CommandContext(load_config(config_path), "client process")
+    return CommandContext(load_config(config_path), "client manual")
 
 
-def _process_handler():
-    handler = getattr(client_commands, "process", None)
-    assert callable(handler), "client process handler is missing"
+def _manual_handler():
+    handler = getattr(client_commands, "manual", None)
+    assert callable(handler), "client manual handler is missing"
     return handler
 
 
-def test_process_adds_one_video_then_starts_at_wait(tmp_path, monkeypatch):
+def test_manual_adds_one_video_then_starts_at_wait(tmp_path, monkeypatch):
     events: list[tuple] = []
 
     def add(_ctx, args, _logger):
@@ -50,28 +50,28 @@ def test_process_adds_one_video_then_starts_at_wait(tmp_path, monkeypatch):
     monkeypatch.setattr(client_commands, "add", add)
     monkeypatch.setattr(client_commands, "run_pipeline", run_pipeline)
     monkeypatch.setattr(
-        client_commands, "scan", lambda *_args: pytest.fail("process must not scan")
+        client_commands, "scan", lambda *_args: pytest.fail("manual must not scan")
     )
     args = Namespace(
         bvid="BVxxxx",
         category="历史",
         server="browser",
         account=None,
-        command="process",
+        command="manual",
     )
 
-    code = _process_handler()(
+    code = _manual_handler()(
         _context(tmp_path), args, logging.getLogger("test")
     )
 
     assert code == 0
     assert events == [
         ("add", "BVxxxx", "历史"),
-        ("pipeline", "wait", "process", "browser"),
+        ("pipeline", "wait", "manual", "browser"),
     ]
 
 
-def test_process_stops_when_add_fails(tmp_path, monkeypatch):
+def test_manual_stops_when_add_fails(tmp_path, monkeypatch):
     events: list[str] = []
     monkeypatch.setattr(
         client_commands, "add", lambda *_args: events.append("add") or 1
@@ -86,10 +86,10 @@ def test_process_stops_when_add_fails(tmp_path, monkeypatch):
         category="投资",
         server="browser",
         account=None,
-        command="process",
+        command="manual",
     )
 
-    code = _process_handler()(
+    code = _manual_handler()(
         _context(tmp_path), args, logging.getLogger("test")
     )
 
@@ -97,7 +97,7 @@ def test_process_stops_when_add_fails(tmp_path, monkeypatch):
     assert events == ["add"]
 
 
-def test_process_cli_requires_account_before_adding(tmp_path, monkeypatch):
+def test_manual_cli_requires_account_before_adding(tmp_path, monkeypatch):
     events: list[str] = []
     monkeypatch.setattr(
         client_commands,
@@ -109,10 +109,10 @@ def test_process_cli_requires_account_before_adding(tmp_path, monkeypatch):
         category="投资",
         server="cli",
         account=None,
-        command="process",
+        command="manual",
     )
 
-    code = _process_handler()(
+    code = _manual_handler()(
         _context(tmp_path), args, logging.getLogger("test")
     )
 
@@ -120,7 +120,7 @@ def test_process_cli_requires_account_before_adding(tmp_path, monkeypatch):
     assert events == []
 
 
-def test_process_cli_passes_account_to_remaining_pipeline(tmp_path, monkeypatch):
+def test_manual_cli_passes_account_to_remaining_pipeline(tmp_path, monkeypatch):
     calls: list[tuple] = []
     monkeypatch.setattr(client_commands, "add", lambda *_args: 0)
     monkeypatch.setattr(
@@ -136,12 +136,12 @@ def test_process_cli_passes_account_to_remaining_pipeline(tmp_path, monkeypatch)
         category="投资",
         server="cli",
         account="account-a",
-        command="process",
+        command="manual",
     )
 
-    code = _process_handler()(
+    code = _manual_handler()(
         _context(tmp_path), args, logging.getLogger("test")
     )
 
     assert code == 0
-    assert calls == [("wait", "cli", "account-a", "process")]
+    assert calls == [("wait", "cli", "account-a", "manual")]

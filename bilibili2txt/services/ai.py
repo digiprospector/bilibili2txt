@@ -9,6 +9,7 @@ from ..config import AppConfig
 from .prompts import (
     DEFAULT_INVESTMENT_SYSTEM_PROMPT,
     DEFAULT_INVESTMENT_USER_PROMPT_TEMPLATE,
+    PromptConfig,
     get_prompt_for_category,
 )
 
@@ -97,6 +98,7 @@ class AIService:
         provider_name: str | None = None,
         model: str | None = None,
         category: str | None = None,
+        prompt_config: PromptConfig | None = None,
     ) -> tuple[str, str]:
         if provider_name:
             provider = None
@@ -123,8 +125,8 @@ class AIService:
         )
         model_name = model or provider.get("model", "gpt-4o-mini")
         prompts_dir = self.config.prompts_dir
-        prompt_cfg = get_prompt_for_category(category or "投资", prompts_dir, self.logger)
-        system_prompt = provider.get("prompt") or prompt_cfg.system_prompt
+        prompt_cfg = prompt_config or get_prompt_for_category(category or "投资", prompts_dir, self.logger)
+        system_prompt = prompt_config.system_prompt if prompt_config else (provider.get("prompt") or prompt_cfg.system_prompt)
         user_content = prompt_cfg.user_prompt_template.format(content=content)
         response = client.chat.completions.create(
             model=model_name,

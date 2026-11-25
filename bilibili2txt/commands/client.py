@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 
 from ..config import (
     CommandContext,
-    is_process_mode,
+    is_manual_mode,
     open_context_queue,
     resolve_queue_subdir,
 )
@@ -18,7 +18,7 @@ from ..services.audio import AudioService
 from ..services.bilibili import BilibiliService
 from ..services.gitqueue import GitQueue
 from ..services.markdown import build_markdown, md_path_for, parse_transcript_filename
-from ..services.prompts import get_available_categories, get_category_names
+from ..services.prompts import get_available_categories, get_category_names, resolve_prompt
 from ..services.video_id import parse_video_input
 from ..services.webdav import WebDavClient
 from .colab import run as colab_run, run_all as colab_run_all
@@ -176,7 +176,7 @@ def categories(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    raw_input = args.bvid.strip()
+    raw_input = (getattr(args, "bvid", None) or "").strip()
     if not raw_input:
         logger.error("必须提供 BVID 或视频链接")
         return 1
@@ -226,8 +226,8 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     task.source_type = "manual"
     task.category = category
     task.source_name = category
-    # client process 处理单视频时忽略时长上限，始终按 normal 状态正常处理
-    if not is_process_mode(ctx, args) and task.duration > scrape_duration_max:
+    # client manual 处理单视频时忽略时长上限，始终按 normal 状态正常处理
+    if not is_manual_mode(ctx, args) and task.duration > scrape_duration_max:
         task.status = "too_long"
 
     for old_file in output_dir.glob(f"*_{bvid}.json"):
@@ -288,17 +288,72 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     return 0
 
 
-def process(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    if getattr(args, "server", "browser") == "cli" and not getattr(args, "account", None):
-        logger.error("client process 使用 CLI server 时必须指定 --account")
+MANUAL_STEPS = ("submit", "wait", "collect", "render", "sync", "finish")
+MANUAL_STEP_ALIASES = {
+    "add": "submit",
+    "prepare": "submit",
+    "prepare-audio": "submit",
+    "prepare_audio": "submit",
+    "audio": "submit",
+    "submit": "submit",
+    "wait": "wait",
+    "wait-for-queue": "wait",
+    "wait_for_queue": "wait",
+    "collect": "collect",
+    "render": "render",
+    "sync": "sync",
+    "finish": "finish",
+}
+
+
+def manual(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    raw_from = getattr(args, "from_step", None) or "submit"
+    from_key = str(raw_from).strip().lower()
+    start_step = MANUAL_STEP_ALIASES.get(from_key)
+    if not start_step or start_step not in MANUAL_STEPS:
+        logger.error("无效的起始步骤: '%s'。可选步骤为: %s", raw_from, ", ".join(MANUAL_STEPS))
         return 2
 
-    add_code = add(ctx, args, logger)
-    if add_code != 0:
-        logger.error("单视频准备失败，停止 process 流程")
-        return add_code
+    raw_until = getattr(args, "until_step", None) or "finish"
+    until_key = str(raw_until).strip().lower()
+    end_step = MANUAL_STEP_ALIASES.get(until_key)
+    if not end_step or end_step not in MANUAL_STEPS:
+        logger.error("无效的结束步骤: '%s'。可选步骤为: %s", raw_until, ", ".join(MANUAL_STEPS))
+        return 2
 
-    return run_pipeline(ctx, args, logger, from_step="wait")
+    start_idx = MANUAL_STEPS.index(start_step)
+    end_idx = MANUAL_STEPS.index(end_step)
+    if end_idx < start_idx:
+        logger.error("结束步骤 '%s' 不能早于起始步骤 '%s'", end_step, start_step)
+        return 2
+
+    need_add = start_idx == 0
+    need_wait = start_idx <= MANUAL_STEPS.index("wait") <= end_idx
+
+    if need_add and not (getattr(args, "bvid", None) or "").strip():
+        logger.error("从提交阶段开始时必须提供 BV 号或视频链接")
+        return 2
+
+    if need_wait and getattr(args, "server", "browser") == "cli" and not getattr(args, "account", None):
+        logger.error("client manual 使用 CLI server 时必须指定 --account")
+        return 2
+
+    if need_add:
+        add_code = add(ctx, args, logger)
+        if add_code != 0:
+            logger.error("单视频准备失败，停止 manual 流程")
+            return add_code
+        if end_idx == 0:
+            logger.info("已按 --until submit 完成任务创建、提交队列与音频准备，流程结束。")
+            return 0
+
+    pipeline_from = "wait" if need_add else start_step
+    pipeline_args = args
+    if need_add and getattr(args, "from_step", None) is not None:
+        from argparse import Namespace
+        pipeline_args = Namespace(**{**vars(args), "from_step": "wait"})
+
+    return run_pipeline(ctx, pipeline_args, logger, from_step=pipeline_from)
 
 
 def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
@@ -607,6 +662,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
 
+    force = bool(getattr(args, "force", False))
     succeeded = 0
     skipped = 0
     failed = 0
@@ -629,7 +685,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
         copied_any = False
         for transcript in transcript_files:
             target = save_dir / _final_transcript_name(task, transcript)
-            if target.exists() and not args.force:
+            if target.exists() and not force:
                 logger.info("跳过已存在的文稿: %s", target)
                 skipped += 1
                 continue
@@ -639,7 +695,7 @@ def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
             logger.info("已收集文稿: %s -> %s", transcript, target)
             copied_any = True
 
-        if copied_any or all_exist or args.force:
+        if copied_any or all_exist or force:
             done_path = queue.collect_result_to_done(result_dir)
             if done_path.exists():
                 shutil.rmtree(done_path)
@@ -691,16 +747,39 @@ def clean_finished_favorites(
     return 0
 
 
+def _extract_bvid(args) -> str | None:
+    raw_bvid = getattr(args, "bvid", None)
+    if not raw_bvid:
+        return None
+    raw_str = str(raw_bvid).strip()
+    if not raw_str:
+        return None
+    parsed_bv, _ = parse_video_input(raw_str)
+    return parsed_bv or raw_str
+
+
 def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
+    raw_prompt = getattr(args, "prompt", None)
+    override_prompt = None
+    if raw_prompt:
+        try:
+            override_prompt = resolve_prompt(str(raw_prompt), ctx.config.prompts_dir, logger)
+            logger.info("已指定自定义 Prompt: %s", override_prompt.name)
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return 1
+
     db = ctx.database()
     ai = AIService(ctx.config, logger)
     ai.test_and_filter_providers()
     save_dir = ctx.config.data_dir / "save"
     markdown_root = ctx.config.data_dir / "markdown"
 
+    force = bool(getattr(args, "force", False))
+    bvid_filter = _extract_bvid(args)
     text_files = sorted(save_dir.glob("*.text"))
-    if args.bvid:
-        text_files = [path for path in text_files if args.bvid in path.name]
+    if bvid_filter:
+        text_files = [path for path in text_files if bvid_filter in path.name]
     if not text_files:
         logger.info("在 %s 中未找到任何可渲染的 .text 文件", save_dir)
         ctx.extra["render_stats"] = {"succeeded": 0, "skipped": 0, "failed": 0}
@@ -721,7 +800,7 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
         source_type = vmeta.get("source_type") or "group"
         category = vmeta.get("category") or "投资"
         target = md_path_for(meta, markdown_root, text_file, source_type=source_type, category=category)
-        if target.exists() and not args.force:
+        if target.exists() and not force:
             logger.debug("跳过已存在的 Markdown: %s", target)
             skipped += 1
             continue
@@ -731,7 +810,10 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
     for idx, (text_file, meta, target, source_type, category) in enumerate(to_render, 1):
         transcript = text_file.read_text(encoding="utf-8")
         try:
-            ai_provider, summary = ai.summarize(transcript, category=category)
+            if override_prompt is not None:
+                ai_provider, summary = ai.summarize(transcript, category=category, prompt_config=override_prompt)
+            else:
+                ai_provider, summary = ai.summarize(transcript, category=category)
             content = build_markdown(
                 meta,
                 transcript,
@@ -743,12 +825,14 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             db.record_render(meta.bvid, text_file, target, ai_provider, "success")
+            prompt_name = override_prompt.name if override_prompt is not None else category
             logger.info(
-                "已生成 Markdown [%d/%d]: %s (分类: %s, 来源: %s, 由 %s 生成)",
+                "已生成 Markdown [%d/%d]: %s (分类: %s, Prompt: %s, 来源: %s, 由 %s 生成)",
                 idx,
                 total,
                 target,
                 category,
+                prompt_name,
                 source_type,
                 ai_provider,
             )
@@ -768,8 +852,9 @@ def render(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 def sync(ctx: CommandContext, args, logger: logging.Logger) -> int:
     service = ctx.netdisk_sync(logger)
-    bvid = getattr(args, "bvid", None)
-    stats = service.sync(force=args.force, bvid=bvid)
+    force = bool(getattr(args, "force", False))
+    bvid = _extract_bvid(args)
+    stats = service.sync(force=force, bvid=bvid)
     logger.info(
         "同步总结: 已拷贝=%s 已跳过=%s 冲突数=%s 已归档数=%s",
         stats.copied,
@@ -961,7 +1046,21 @@ def run_pipeline(ctx: CommandContext, args, logger: logging.Logger, from_step: s
             return _finish_run(1, f"无效的起始步骤: '{raw_step}'")
 
         start_index = CLIENT_STEPS.index(normalized_step)
-        steps_to_run = CLIENT_STEPS[start_index:]
+        raw_until = getattr(args, "until_step", None)
+        if raw_until:
+            until_key = str(raw_until).strip().lower()
+            normalized_until = STEP_ALIASES.get(until_key)
+            if not normalized_until or normalized_until not in CLIENT_STEPS:
+                valid_steps = ", ".join(CLIENT_STEPS)
+                logger.error("无效的结束步骤: '%s'。可选步骤为: %s", raw_until, valid_steps)
+                return _finish_run(1, f"无效的结束步骤: '{raw_until}'")
+            end_index = CLIENT_STEPS.index(normalized_until)
+            if end_index < start_index:
+                logger.error("结束步骤 '%s' 不能早于起始步骤 '%s'", normalized_until, normalized_step)
+                return _finish_run(2, f"结束步骤 '{normalized_until}' 早于起始步骤 '{normalized_step}'")
+            steps_to_run = CLIENT_STEPS[start_index : end_index + 1]
+        else:
+            steps_to_run = CLIENT_STEPS[start_index:]
         logger.info("执行流水线: %s", " -> ".join(steps_to_run))
 
         skip_env_check = getattr(args, "skip_env_check", False)
@@ -1034,9 +1133,9 @@ def run_pipeline(ctx: CommandContext, args, logger: logging.Logger, from_step: s
         if "wait" in steps_to_run:
             server_mode = getattr(args, "server", "browser")
             if server_mode == "cli":
-                if getattr(args, "command", None) == "process":
+                if getattr(args, "command", None) == "manual":
                     if not getattr(args, "account", None):
-                        logger.error("client process 使用 CLI server 时必须指定 --account")
+                        logger.error("client manual 使用 CLI server 时必须指定 --account")
                         return _finish_run(2, "缺少 Colab 账号")
                     logger.info("====== wait-for-cli-server account=%s ======", args.account)
                     server_code = colab_run(ctx, args, logger)

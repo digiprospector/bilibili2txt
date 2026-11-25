@@ -98,7 +98,7 @@ def test_cli_run_uses_colab_run_all_without_browser(tmp_path, monkeypatch):
     assert events == ["run-all", "collect", "render", "sync", "finish"]
 
 
-def test_cli_process_uses_the_selected_account(tmp_path, monkeypatch):
+def test_cli_manual_uses_the_selected_account(tmp_path, monkeypatch):
     events = _patch_pipeline(monkeypatch)
     monkeypatch.setattr(
         client_commands,
@@ -107,11 +107,11 @@ def test_cli_process_uses_the_selected_account(tmp_path, monkeypatch):
         raising=False,
     )
     args = Namespace(
-        server="cli", command="process", account="account-a", wait=True
+        server="cli", command="manual", account="account-a", wait=True
     )
 
     code = client_commands.run_pipeline(
-        _context(tmp_path, "process"),
+        _context(tmp_path, "manual"),
         args,
         logging.getLogger("test"),
         from_step="wait",

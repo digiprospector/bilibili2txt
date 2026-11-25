@@ -10,12 +10,12 @@ from pathlib import Path
 
 import yaml
 
-from ..config import AppConfig, CommandContext, is_process_mode
+from ..config import AppConfig, CommandContext, is_manual_mode
 
 
 DEFAULT_GPU = "T4"
 DEFAULT_NOTEBOOK = "notebooks/bilibili2txt_server_colab.ipynb"
-DEFAULT_PROCESS_NOTEBOOK = "notebooks/bilibili2txt_server_colab_process.ipynb"
+DEFAULT_MANUAL_NOTEBOOK = "notebooks/bilibili2txt_server_colab_manual.ipynb"
 DEFAULT_COMMAND_TIMEOUT = 30
 DEFAULT_MOUNT_TIMEOUT = 150
 # 每个 WSL 用户下只维护一个业务 session，账号由 WSL 用户区分。
@@ -181,9 +181,9 @@ def _gpu(config: AppConfig) -> str:
     return str(config.get("colab.gpu") or DEFAULT_GPU)
 
 
-def _notebook_wsl_path(config: AppConfig, *, process: bool = False) -> str:
-    default_nb = DEFAULT_PROCESS_NOTEBOOK if process else DEFAULT_NOTEBOOK
-    key = "colab.process_notebook" if process else "colab.notebook"
+def _notebook_wsl_path(config: AppConfig, *, manual: bool = False) -> str:
+    default_nb = DEFAULT_MANUAL_NOTEBOOK if manual else DEFAULT_NOTEBOOK
+    key = "colab.manual_notebook" if manual else "colab.notebook"
     notebook = Path(config.get(key) or default_nb).expanduser()
     if not notebook.is_absolute():
         notebook = PROJECT_DIR / notebook
@@ -205,9 +205,9 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 2
 
     session = SESSION_NAME
-    process_mode = is_process_mode(ctx, args)
-    notebook_wsl_path = _notebook_wsl_path(ctx.config, process=process_mode)
-    logger.info("启动账号 %s (process=%s, notebook=%s)", account.name, process_mode, notebook_wsl_path)
+    manual_mode = is_manual_mode(ctx, args)
+    notebook_wsl_path = _notebook_wsl_path(ctx.config, manual=manual_mode)
+    logger.info("启动账号 %s (manual=%s, notebook=%s)", account.name, manual_mode, notebook_wsl_path)
 
     # colab new 遇到同名 session 会直接覆盖本地记录，旧 VM 会变成孤儿，
     # 所以先停掉可能残留的 session（stop 对不存在的 session 是幂等的）。

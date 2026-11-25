@@ -14,7 +14,7 @@ from .commands.client import (
     collect as client_collect,
     finish as client_finish,
     prepare_audio as client_prepare_audio,
-    process as client_process,
+    manual as client_manual,
     render as client_render,
     resubmit_missing as client_resubmit_missing,
     resume as client_resume,
@@ -74,6 +74,9 @@ ARG_MAX_TASKS = (("-m", "--max-tasks"), {})
 ARG_INTERVAL = (("-i", "--interval"), {})
 ARG_VIDEO = ("video", {})
 ARG_BVID_POS = ("bvid", {"help": "视频的 BV 号或 B 站视频链接"})
+ARG_BVID_OPT = ("bvid", {"nargs": "?", "default": None, "help": "视频的 BV 号或 B 站视频链接（--from wait/collect 时可选）"})
+ARG_FROM = (("--from", "--from-step"), {"dest": "from_step", "default": None, "help": "从该步骤开始执行（可选: submit, wait, collect, render, sync, finish）"})
+ARG_UNTIL = (("--until",), {"dest": "until_step", "default": None, "help": "执行到该步骤为止（可选: submit, wait, collect, render, sync, finish）"})
 ARG_CATEGORY = (("-c", "--category"), {"default": "投资", "help": "视频内容分类（如 投资、历史），默认为 投资"})
 ARG_MESSAGE = (("-m", "--message"), {})
 ARG_DRY_RUN = (("-d", "--dry-run"), {"action": "store_true"})
@@ -95,11 +98,13 @@ ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
 ARG_SERVER = (("--server",), {"choices": ("browser", "cli"), "default": "browser", "help": "转写服务端方式：browser 或 cli（默认 browser）"})
 ARG_ACCOUNT = (("-a", "--account"), {"help": "colab 账号名（对应 colab.accounts 配置）"})
-ARG_PROCESS_QUEUE = (("--process",), {"action": "store_true", "help": "使用 queue/process 独立子目录队列"})
+ARG_MANUAL_QUEUE = (("--manual",), {"action": "store_true", "help": "使用 queue/manual 独立子目录队列"})
+ARG_PROMPT = (("-p", "--prompt"), {"default": None, "help": "指定使用的 Prompt 名称或 YAML 文件路径（覆盖分类默认 Prompt）"})
+ARG_PROMPT_OPT = (("--prompt",), {"default": None, "help": "指定使用的 Prompt 名称或 YAML 文件路径（覆盖分类默认 Prompt）"})
 
-_SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL, ARG_PROCESS_QUEUE]
+_SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL, ARG_MANUAL_QUEUE]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
-_RENDER_ARGS = [ARG_FORCE, ARG_BVID]
+_RENDER_ARGS = [ARG_FORCE, ARG_BVID, ARG_PROMPT]
 _HUGO_ARGS = [ARG_FORCE, ARG_BVID]
 _CLIENT_PIPELINE_ARGS = _SCAN_ARGS + [
     ARG_INPUT,
@@ -135,14 +140,14 @@ COMMANDS = {
         ("submit", client_submit, [ARG_INPUT]),
         ("prepare-audio", client_prepare_audio, [ARG_MIN_DURATION, ARG_FORCE]),
         ("add", client_add, [ARG_BVID_POS, ARG_CATEGORY]),
-        ("process", client_process, [ARG_BVID_POS, ARG_CATEGORY, ARG_SERVER, ARG_ACCOUNT]),
+        ("manual", client_manual, [ARG_BVID_OPT, ARG_CATEGORY, ARG_SERVER, ARG_ACCOUNT, ARG_FORCE, ARG_FROM, ARG_UNTIL, ARG_PROMPT]),
         ("categories", client_categories, []),
-        ("collect", client_collect, [ARG_FORCE, ARG_PROCESS_QUEUE]),
+        ("collect", client_collect, [ARG_FORCE, ARG_MANUAL_QUEUE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
-        ("run", client_run, _CLIENT_PIPELINE_ARGS + [ARG_SERVER]),
-        ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS),
-        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE, ARG_PROCESS_QUEUE]),
+        ("run", client_run, _CLIENT_PIPELINE_ARGS + [ARG_SERVER, ARG_UNTIL, ARG_PROMPT_OPT]),
+        ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS + [ARG_SERVER, ARG_ACCOUNT, ARG_MANUAL_QUEUE, ARG_UNTIL, ARG_PROMPT_OPT]),
+        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE, ARG_MANUAL_QUEUE]),
         ("clean-favorites", client_clean_finished_favorites, []),
         ("finish", client_finish, [ARG_MESSAGE]),
     ],
@@ -155,7 +160,7 @@ COMMANDS = {
         ("release-claimed", server_release_claimed, _SERVER_ARGS),
     ],
     "colab": [
-        ("run", colab_run, [ARG_ACCOUNT, ARG_PROCESS_QUEUE]),
+        ("run", colab_run, [ARG_ACCOUNT, ARG_MANUAL_QUEUE]),
         ("run-all", colab_run_all, []),
         ("login", colab_login, [ARG_ACCOUNT]),
         ("status", colab_status, [ARG_ACCOUNT]),
@@ -271,7 +276,7 @@ COMMAND_HELPS = {
         "submit": "将新视频打包成转写任务提交到 Git 任务队列中",
         "prepare-audio": "提取视频音频并上传至共享 WebDAV 网盘",
         "add": "通过 BV 号直接添加单个视频（扫描+提交+准备音频一步完成）",
-        "process": "处理指定 BV 视频完整流程（准备、提交、等待转写、收集和归档）",
+        "manual": "手动处理指定 BV 视频完整流程（准备、提交、等待转写、收集和归档）",
         "collect": "从任务队列拉取已转写完成的 JSON 结果",
         "render": "将收集到的转写结果渲染并调用 AI 生成 Markdown 总结",
         "sync": "将生成的 Markdown 总结同步至网盘或指定归档目录",

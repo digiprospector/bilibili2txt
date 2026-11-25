@@ -169,20 +169,20 @@ class CommandContext:
         )
 
 
-def is_process_mode(ctx: CommandContext, args) -> bool:
-    """判断当前命令是否处于 process 独立队列模式。"""
+def is_manual_mode(ctx: CommandContext, args) -> bool:
+    """判断当前命令是否处于 manual 独立队列模式。"""
     return (
-        ctx.command_name == "client process"
-        or getattr(args, "command", None) == "process"
-        or bool(getattr(args, "process", False))
+        ctx.command_name == "client manual"
+        or getattr(args, "command", None) == "manual"
+        or bool(getattr(args, "manual", False))
     )
 
 
 def resolve_queue_subdir(ctx: CommandContext, args) -> str | None:
-    """返回当前命令应使用的队列子目录；process 模式返回独立目录名，否则返回 None。"""
-    if not is_process_mode(ctx, args):
+    """返回当前命令应使用的队列子目录；manual 模式返回独立目录名，否则返回 None。"""
+    if not is_manual_mode(ctx, args):
         return None
-    return str(ctx.config.get("queue.process_dir") or "process")
+    return str(ctx.config.get("queue.manual_dir") or "manual")
 
 
 def open_context_queue(
@@ -193,7 +193,7 @@ def open_context_queue(
     sync: bool = True,
     max_retries: int | None = 3,
 ):
-    """根据当前命令模式打开对应队列（默认根目录或 process 独立子目录）。"""
+    """根据当前命令模式打开对应队列（默认根目录或 manual 独立子目录）。"""
     subdir = resolve_queue_subdir(ctx, args)
     kwargs: dict[str, Any] = {"sync": sync, "max_retries": max_retries}
     if subdir:
