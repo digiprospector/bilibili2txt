@@ -127,11 +127,23 @@ class CommandContext:
         db.initialize()
         return db
 
-    def queue(self, logger: logging.Logger, *, sync: bool = True, max_retries: int | None = 3):
+    def queue(
+        self,
+        logger: logging.Logger,
+        *,
+        sync: bool = True,
+        max_retries: int | None = 3,
+        subdir: str | None = None,
+    ):
         from .services.gitqueue import GitQueue
 
         git_timeout = int(self.config.get("queue.git_timeout", 30))
-        q = GitQueue(self.config.queue_dir, logger, git_timeout=git_timeout)
+        q = GitQueue(
+            self.config.queue_dir,
+            logger,
+            git_timeout=git_timeout,
+            queue_subdir=subdir,
+        )
         q.ensure_layout()
         if sync:
             q.sync(max_retries=max_retries)
@@ -155,4 +167,36 @@ class CommandContext:
             config=self.config,
             logger=logger,
         )
+
+
+def is_process_mode(ctx: CommandContext, args) -> bool:
+    """判断当前命令是否处于 process 独立队列模式。"""
+    return (
+        ctx.command_name == "client process"
+        or getattr(args, "command", None) == "process"
+        or bool(getattr(args, "process", False))
+    )
+
+
+def resolve_queue_subdir(ctx: CommandContext, args) -> str | None:
+    """返回当前命令应使用的队列子目录；process 模式返回独立目录名，否则返回 None。"""
+    if not is_process_mode(ctx, args):
+        return None
+    return str(ctx.config.get("queue.process_dir") or "process")
+
+
+def open_context_queue(
+    ctx: CommandContext,
+    args,
+    logger: logging.Logger,
+    *,
+    sync: bool = True,
+    max_retries: int | None = 3,
+):
+    """根据当前命令模式打开对应队列（默认根目录或 process 独立子目录）。"""
+    subdir = resolve_queue_subdir(ctx, args)
+    kwargs: dict[str, Any] = {"sync": sync, "max_retries": max_retries}
+    if subdir:
+        kwargs["subdir"] = subdir
+    return ctx.queue(logger, **kwargs)
 

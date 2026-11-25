@@ -81,9 +81,11 @@ class AudioService:
     def _download_with_ytdlp(self, task: Task) -> list[Path]:
         self.logger.info("使用 yt-dlp 下载音频：%s", task.source_url)
         output_template = self.audio_dir / f"{task.bvid}_%(playlist_index)s"
+        noplaylist = not bool(self.config.get("bilibili.download_playlist", False))
         opts = {
             "format": "ba/bestaudio",
             "outtmpl": str(output_template),
+            "noplaylist": noplaylist,  # 默认仅下载当前视频，不下载整个合集/播放列表
             "retries": 20,
             "continuedl": True,
             "retry_sleep": {"http": 10, "fragment": 10, "hls": 10},

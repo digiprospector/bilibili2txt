@@ -6,7 +6,12 @@ import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from ..config import CommandContext
+from ..config import (
+    CommandContext,
+    is_process_mode,
+    open_context_queue,
+    resolve_queue_subdir,
+)
 from ..models import Task
 from ..services.ai import AIService, format_api_error
 from ..services.audio import AudioService
@@ -221,7 +226,8 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
     task.source_type = "manual"
     task.category = category
     task.source_name = category
-    if task.duration > scrape_duration_max:
+    # client process 处理单视频时忽略时长上限，始终按 normal 状态正常处理
+    if not is_process_mode(ctx, args) and task.duration > scrape_duration_max:
         task.status = "too_long"
 
     for old_file in output_dir.glob(f"*_{bvid}.json"):
@@ -243,7 +249,7 @@ def add(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
     # --- Phase 2: submit (add to git queue) ---
     logger.info("====== add: submit %s ======", bvid)
-    queue = ctx.queue(logger)
+    queue = open_context_queue(ctx, args, logger)
     submitted_dir = ctx.config.data_dir / "tasks" / "submitted"
     submitted_dir.mkdir(parents=True, exist_ok=True)
 
@@ -296,7 +302,7 @@ def process(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    queue = ctx.queue(logger)
+    queue = open_context_queue(ctx, args, logger)
     db = ctx.database()
 
     input_dir = Path(args.input) if args.input else ctx.config.temp_dir / "tasks"
@@ -361,7 +367,12 @@ def submit(ctx: CommandContext, args, logger: logging.Logger) -> int:
 def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
     min_duration = int(args.min_duration or ctx.config.get("client.local_download_audio_seconds", 1800))
     git_timeout = int(ctx.config.get("queue.git_timeout", 30))
-    queue = GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
+    subdir = resolve_queue_subdir(ctx, args)
+    queue = (
+        GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout, queue_subdir=subdir)
+        if subdir
+        else GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
+    )
     audio = AudioService(ctx.config, logger)
 
     queue.ensure_layout()
@@ -513,7 +524,7 @@ def prepare_audio(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def resubmit_missing(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    queue = ctx.queue(logger)
+    queue = open_context_queue(ctx, args, logger)
     db = ctx.database()
 
     excludes = set()
@@ -587,7 +598,7 @@ def resubmit_missing(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def collect(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    queue = ctx.queue(logger)
+    queue = open_context_queue(ctx, args, logger)
     db = ctx.database()
 
     save_dir = ctx.config.data_dir / "save"
@@ -789,12 +800,23 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
     # 1. 测试 Bilibili 下载并上传到 WebDAV
     logger.info("--- 测试 Bilibili 真实下载并上传到 WebDAV ---")
     try:
-        test_url = "https://www.bilibili.com/video/BV1v49YBHESJ"
+        configured_url = (
+            ctx.config.get("bilibili.test_url")
+            or ctx.config.get("client.test_url")
+            or "https://www.bilibili.com/video/BV1v49YBHESJ"
+        )
+        parsed_bvid, _ = parse_video_input(str(configured_url))
+        test_bvid = parsed_bvid or "BV1v49YBHESJ"
+        test_url = (
+            str(configured_url).strip()
+            if str(configured_url).strip().startswith("http")
+            else f"https://www.bilibili.com/video/{test_bvid}"
+        )
         logger.info("Bilibili 下载测试地址: %s", test_url)
 
         test_task = Task(
             task_id="env_check_test",
-            bvid="BV1v49YBHESJ",
+            bvid=test_bvid,
             title="env_check_test",
             up_name="test",
             up_mid=None,
@@ -810,15 +832,38 @@ def env_check(ctx: CommandContext, logger: logging.Logger) -> bool:
         logger.info("Bilibili 下载测试通过（已下载）。现在开始测试上传...")
 
         webdav = WebDavClient.from_config(ctx.config, logger)
+        min_upload_speed_kb = float(
+            ctx.config.get("webdav.min_upload_speed_kb")
+            or ctx.config.get("client.min_upload_speed_kb")
+            or 100
+        )
         for local_path in audio_files:
             if not local_path.exists():
                 continue
             logger.info("准备上传到 WebDAV: %s", local_path.name)
             remote_name = f"test_download_{local_path.name}"
+            file_size_bytes = local_path.stat().st_size
+            start_upload_time = time.time()
             if webdav.upload(local_path, remote_name):
-                logger.info("WebDAV 上传测试成功: %s。正在清理...", remote_name)
+                elapsed_upload_time = time.time() - start_upload_time
+                speed_kb_s = (file_size_bytes / 1024.0) / elapsed_upload_time if elapsed_upload_time > 0 else 0.0
+                logger.info(
+                    "WebDAV 上传测试成功: %s (大小: %.2f KB, 耗时: %.2f 秒, 速度: %.2f KB/s)。正在清理...",
+                    remote_name,
+                    file_size_bytes / 1024.0,
+                    elapsed_upload_time,
+                    speed_kb_s,
+                )
                 local_path.unlink(missing_ok=True)
                 webdav.delete(remote_name)
+
+                if speed_kb_s < min_upload_speed_kb:
+                    logger.error(
+                        "WebDAV 上传带宽不足: 当前速度 %.2f KB/s 低于要求的 %.2f KB/s",
+                        speed_kb_s,
+                        min_upload_speed_kb,
+                    )
+                    return False
             else:
                 logger.error("WebDAV 上传测试失败: %s", local_path.name)
                 return False
@@ -1174,7 +1219,12 @@ def _send_dingtalk_run_notification(ctx: CommandContext, logger: logging.Logger,
 
 def _wait_for_queue_completion(ctx: CommandContext, args, logger: logging.Logger) -> None:
     git_timeout = int(ctx.config.get("queue.git_timeout", 30))
-    queue = GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
+    subdir = resolve_queue_subdir(ctx, args)
+    queue = (
+        GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout, queue_subdir=subdir)
+        if subdir
+        else GitQueue(ctx.config.queue_dir, logger, git_timeout=git_timeout)
+    )
     interval = int(ctx.config.get("client.wait_interval_seconds", 60))
     timeout = int(ctx.config.get("client.wait_timeout_seconds", 0))
     start = time.time()

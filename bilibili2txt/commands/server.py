@@ -3,14 +3,14 @@ from __future__ import annotations
 import logging
 import time
 
-from ..config import CommandContext
+from ..config import CommandContext, open_context_queue, resolve_queue_subdir
 from ..services.gitqueue import GitQueue
 from ..services.audio import AudioService
 from ..services.transcriber import Transcriber
 
 
 def claim(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = True) -> int:
-    queue = ctx.queue(logger, sync=sync)
+    queue = open_context_queue(ctx, args, logger, sync=sync)
     server_id = ctx.server_id(args)
     max_duration = int(args.max_duration or ctx.config.get("server.max_duration_seconds", 864000))
 
@@ -26,7 +26,7 @@ def claim(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = Tru
 
 
 def release_claimed(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = True) -> int:
-    queue = ctx.queue(logger, sync=sync)
+    queue = open_context_queue(ctx, args, logger, sync=sync)
     timeout_minutes = int(args.claim_timeout_minutes or ctx.config.get("server.claim_timeout_minutes", 180))
     server_id = ctx.server_id(args)
 
@@ -38,7 +38,12 @@ def release_claimed(ctx: CommandContext, args, logger: logging.Logger, *, sync: 
 
 
 def transcribe(ctx: CommandContext, args, logger: logging.Logger) -> int:
-    queue = GitQueue(ctx.config.queue_dir, logger)
+    subdir = resolve_queue_subdir(ctx, args)
+    queue = (
+        GitQueue(ctx.config.queue_dir, logger, queue_subdir=subdir)
+        if subdir
+        else GitQueue(ctx.config.queue_dir, logger)
+    )
     server_id = ctx.server_id(args)
     claimed = queue.find_claimed_task(server_id)
     if not claimed:
@@ -91,7 +96,7 @@ def transcribe(ctx: CommandContext, args, logger: logging.Logger) -> int:
 
 
 def publish(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = True) -> int:
-    queue = ctx.queue(logger, sync=sync)
+    queue = open_context_queue(ctx, args, logger, sync=sync)
     server_id = ctx.server_id(args)
 
     claimed = queue.find_claimed_task(server_id)
@@ -120,7 +125,7 @@ def publish(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = T
 
                 _time.sleep(retry_interval)
                 try:
-                    queue = ctx.queue(logger, sync=True)
+                    queue = open_context_queue(ctx, args, logger, sync=True)
                 except Exception as sync_exc:
                     logger.warning("重试前同步队列失败：%s", sync_exc)
                 claimed = queue.find_claimed_task(server_id)
@@ -186,7 +191,7 @@ def once(ctx: CommandContext, args, logger: logging.Logger, *, sync: bool = True
 def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
     try:
         logger.info("正在初始化并同步 queue 仓库...")
-        ctx.queue(logger, sync=True)
+        open_context_queue(ctx, args, logger, sync=True)
     except Exception as exc:
         logger.warning("初始化同步 queue 仓库失败：%s", exc)
 
@@ -217,7 +222,7 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         if should_sync:
             try:
                 logger.info("正在循环开始时同步 queue 仓库...")
-                ctx.queue(logger, sync=True)
+                open_context_queue(ctx, args, logger, sync=True)
                 should_sync = False
             except Exception as exc:
                 logger.warning("循环开始时同步 queue 仓库失败：%s。%s 秒后重试...", exc, interval)

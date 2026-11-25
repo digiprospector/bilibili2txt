@@ -10,12 +10,14 @@ from pathlib import Path
 
 import yaml
 
-from ..config import AppConfig, CommandContext
+from ..config import AppConfig, CommandContext, is_process_mode
 
 
 DEFAULT_GPU = "T4"
 DEFAULT_NOTEBOOK = "notebooks/bilibili2txt_server_colab.ipynb"
+DEFAULT_PROCESS_NOTEBOOK = "notebooks/bilibili2txt_server_colab_process.ipynb"
 DEFAULT_COMMAND_TIMEOUT = 30
+DEFAULT_MOUNT_TIMEOUT = 150
 # 每个 WSL 用户下只维护一个业务 session，账号由 WSL 用户区分。
 SESSION_NAME = "b2t"
 # colab-cli 按 WSL 用户保存 OAuth 凭据。
@@ -133,12 +135,20 @@ def _command_timeout(config: AppConfig) -> int:
     return int(value) if value is not None else DEFAULT_COMMAND_TIMEOUT
 
 
+def _mount_timeout(config: AppConfig) -> int:
+    value = config.get("colab.mount_timeout_seconds")
+    if value is not None:
+        return int(value)
+    return max(_command_timeout(config), DEFAULT_MOUNT_TIMEOUT)
+
+
 def _run_wsl(
     cmd: list[str],
     logger: logging.Logger,
     *,
     capture: bool = True,
     timeout: int | None = None,
+    output: list[str] | None = None,
 ) -> int:
     logger.info("运行: %s", subprocess.list2cmdline(cmd))
     try:
@@ -151,6 +161,8 @@ def _run_wsl(
                 errors="replace",
                 timeout=timeout,
             )
+            if output is not None:
+                output.append(result.stdout or "")
             if result.stdout:
                 logger.info(result.stdout.rstrip())
             if result.stderr:
@@ -169,8 +181,10 @@ def _gpu(config: AppConfig) -> str:
     return str(config.get("colab.gpu") or DEFAULT_GPU)
 
 
-def _notebook_wsl_path(config: AppConfig) -> str:
-    notebook = Path(config.get("colab.notebook") or DEFAULT_NOTEBOOK).expanduser()
+def _notebook_wsl_path(config: AppConfig, *, process: bool = False) -> str:
+    default_nb = DEFAULT_PROCESS_NOTEBOOK if process else DEFAULT_NOTEBOOK
+    key = "colab.process_notebook" if process else "colab.notebook"
+    notebook = Path(config.get(key) or default_nb).expanduser()
     if not notebook.is_absolute():
         notebook = PROJECT_DIR / notebook
     return _to_wsl_path(notebook)
@@ -191,7 +205,9 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return 2
 
     session = SESSION_NAME
-    logger.info("启动账号 %s", account.name)
+    process_mode = is_process_mode(ctx, args)
+    notebook_wsl_path = _notebook_wsl_path(ctx.config, process=process_mode)
+    logger.info("启动账号 %s (process=%s, notebook=%s)", account.name, process_mode, notebook_wsl_path)
 
     # colab new 遇到同名 session 会直接覆盖本地记录，旧 VM 会变成孤儿，
     # 所以先停掉可能残留的 session（stop 对不存在的 session 是幂等的）。
@@ -219,6 +235,38 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
         return ret
 
     try:
+        mount_ret = _run_wsl(
+            _build_wsl_command(
+                ctx.config,
+                ["colab", "dfs", "mount", "-s", session],
+                account=account,
+            ),
+            logger,
+            timeout=_mount_timeout(ctx.config),
+        )
+        if mount_ret != 0:
+            logger.error("挂载 Google Drive 失败 (session=%s)", session)
+            return mount_ret
+
+        ls_output: list[str] = []
+        ls_ret = _run_wsl(
+            _build_wsl_command(
+                ctx.config,
+                ["colab", "ls", "/content/drive", "-s", session],
+                account=account,
+            ),
+            logger,
+            timeout=_command_timeout(ctx.config),
+            output=ls_output,
+        )
+        if ls_ret != 0:
+            logger.error("检查 Google Drive 挂载目录失败 (session=%s)", session)
+            return ls_ret
+        if ls_output and "MyDrive" not in "".join(ls_output):
+            logger.error("Google Drive 未成功挂载，/content/drive 中未检测到 MyDrive (session=%s)", session)
+            return 1
+
+        logger.info("Google Drive 挂载验证成功，开始执行 notebook...")
         ret = _run_wsl(
             _build_wsl_command(
                 ctx.config,
@@ -228,7 +276,7 @@ def run(ctx: CommandContext, args, logger: logging.Logger) -> int:
                     "-s",
                     session,
                     "-f",
-                    _notebook_wsl_path(ctx.config),
+                    notebook_wsl_path,
                     "--timeout",
                     str(NOTEBOOK_EXEC_TIMEOUT),
                 ],

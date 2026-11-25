@@ -18,34 +18,44 @@ class QueueError(RuntimeError):
 
 
 class GitQueue:
-    def __init__(self, repo_dir: Path, logger: logging.Logger, git_timeout: int = 30):
+    def __init__(
+        self,
+        repo_dir: Path,
+        logger: logging.Logger,
+        git_timeout: int = 30,
+        queue_subdir: str | Path | None = None,
+    ):
         self.repo_dir = repo_dir
         self.logger = logger
         self.git_timeout = git_timeout
+        subdir = str(queue_subdir).strip().strip("/\\") if queue_subdir else ""
+        self.queue_subdir = subdir
+        # work_dir 指向实际队列根目录：默认 queue/，process 模式为 queue/<queue_subdir>/
+        self.work_dir = self.repo_dir / subdir if subdir else self.repo_dir
 
     @property
     def pending_dir(self) -> Path:
-        return self.repo_dir / "pending"
+        return self.work_dir / "pending"
 
     @property
     def claimed_dir(self) -> Path:
-        return self.repo_dir / "claimed"
+        return self.work_dir / "claimed"
 
     @property
     def results_dir(self) -> Path:
-        return self.repo_dir / "results"
+        return self.work_dir / "results"
 
     @property
     def done_dir(self) -> Path:
-        return self.repo_dir / "done"
+        return self.work_dir / "done"
 
     @property
     def failed_dir(self) -> Path:
-        return self.repo_dir / "failed"
+        return self.work_dir / "failed"
 
     def ensure_layout(self) -> None:
         for name in QUEUE_DIRS:
-            path = self.repo_dir / name
+            path = self.work_dir / name
             path.mkdir(parents=True, exist_ok=True)
             keep = path / ".gitkeep"
             if not keep.exists():

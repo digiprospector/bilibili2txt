@@ -7,6 +7,8 @@ data:
 
 queue:
   repo_dir: queue
+  repo_url: "git@github.com:your-username/your-queue-repo.git"  # Colab 自动克隆队列仓库的地址
+  process_dir: process  # client process 使用的独立队列子目录
   pending_dir: pending
   claimed_dir: claimed
   results_dir: results
@@ -28,6 +30,7 @@ bilibili:
     - 稍后再看  # 收藏夹名称列表（仅提取转写与生成总结，保留在收藏夹中不删除）
   request_interval: 3
   scrape_duration_max: 7200
+  test_url: "https://www.bilibili.com/video/BV1v49YBHESJ"  # 客户端环境检查时的测试视频地址
 
 webdav:
   url: https://your-webdav-server.example/dav/
@@ -35,6 +38,7 @@ webdav:
   password_env: B2T_WEBDAV_PASSWORD
   upload_split_size_mb: 50  # 文件大于此大小(MB)时自动拆分上传，0表示不拆分
   max_retries: 5  # 上传失败重试次数，默认5次
+  min_upload_speed_kb: 100  # 环境检查测试上传时的最低速度阈值 (KB/s)
 
 client:
   local_download_audio_seconds: 1800
@@ -49,6 +53,9 @@ client:
 
 server:
   server_id: colab-a
+  git_email: ""  # 可选，Colab 提交队列时的 Git 邮箱（默认 <server_id>@users.noreply.github.com）
+  ssh_key_path: ""  # 可选，Colab 环境挂载后用于访问私有 Git 仓库的私钥路径（如 /content/drive/MyDrive/your_id_ed25519）
+  git_ssh_user: "git"  # 可选，GitHub SSH 用户名（默认 git）
   engine: funasr  # funasr or whisper
   faster_whisper_path: /content/drive/MyDrive/Faster-Whisper-XXL/faster-whisper-xxl
   max_duration_seconds: 864000
@@ -63,6 +70,7 @@ server:
 colab:
   gpu: T4
   notebook: notebooks/bilibili2txt_server_colab.ipynb
+  process_notebook: notebooks/bilibili2txt_server_colab_process.ipynb
   bookmark_config: ../python_utils_private/open_chrome_bookmark_config.yaml
   command_timeout_seconds: 30  # new/status/stop/whoami 的超时；notebook 执行不限制
   # 每个账号是 WSL 里的一个用户名，通过 wsl.exe -u <name> 切换用户执行

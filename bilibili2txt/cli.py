@@ -95,8 +95,9 @@ ARG_NOTE = (("--note",), {"help": "忽略备注说明信息"})
 ARG_PORT = (("-p", "--port"), {"default": 1313, "help": "本地预览端口号（默认 1313）"})
 ARG_SERVER = (("--server",), {"choices": ("browser", "cli"), "default": "browser", "help": "转写服务端方式：browser 或 cli（默认 browser）"})
 ARG_ACCOUNT = (("-a", "--account"), {"help": "colab 账号名（对应 colab.accounts 配置）"})
+ARG_PROCESS_QUEUE = (("--process",), {"action": "store_true", "help": "使用 queue/process 独立子目录队列"})
 
-_SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL]
+_SERVER_ARGS = [ARG_SERVER_ID, ARG_MAX_DURATION, ARG_CLAIM_TIMEOUT, ARG_KEEP_LOCAL, ARG_MAX_TASKS, ARG_INTERVAL, ARG_PROCESS_QUEUE]
 _SCAN_ARGS = [ARG_UP_MID, ARG_GROUP, ARG_MAX_PAGES]
 _RENDER_ARGS = [ARG_FORCE, ARG_BVID]
 _HUGO_ARGS = [ARG_FORCE, ARG_BVID]
@@ -136,12 +137,12 @@ COMMANDS = {
         ("add", client_add, [ARG_BVID_POS, ARG_CATEGORY]),
         ("process", client_process, [ARG_BVID_POS, ARG_CATEGORY, ARG_SERVER, ARG_ACCOUNT]),
         ("categories", client_categories, []),
-        ("collect", client_collect, [ARG_FORCE]),
+        ("collect", client_collect, [ARG_FORCE, ARG_PROCESS_QUEUE]),
         ("render", client_render, _RENDER_ARGS),
         ("sync", client_sync, [ARG_FORCE, ARG_BVID]),
         ("run", client_run, _CLIENT_PIPELINE_ARGS + [ARG_SERVER]),
         ("resume", client_resume, [ARG_STEP_POS] + _CLIENT_PIPELINE_ARGS),
-        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE]),
+        ("resubmit-missing", client_resubmit_missing, [ARG_INPUT, ARG_FAILED, ARG_EXCLUDE, ARG_PROCESS_QUEUE]),
         ("clean-favorites", client_clean_finished_favorites, []),
         ("finish", client_finish, [ARG_MESSAGE]),
     ],
@@ -154,7 +155,7 @@ COMMANDS = {
         ("release-claimed", server_release_claimed, _SERVER_ARGS),
     ],
     "colab": [
-        ("run", colab_run, [ARG_ACCOUNT]),
+        ("run", colab_run, [ARG_ACCOUNT, ARG_PROCESS_QUEUE]),
         ("run-all", colab_run_all, []),
         ("login", colab_login, [ARG_ACCOUNT]),
         ("status", colab_status, [ARG_ACCOUNT]),
